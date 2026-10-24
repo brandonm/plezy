@@ -22,11 +22,13 @@ import '../media/media_item.dart';
 import '../media/media_item_merge.dart';
 import '../media/media_rating.dart';
 import '../media/media_version.dart';
+import '../mixins/listenable_bindings_mixin.dart';
 import '../models/catalog/catalog_cast_member.dart';
 import '../models/catalog/catalog_item.dart';
 import '../models/catalog/catalog_labels.dart';
 import '../models/catalog/catalog_metadata.dart';
 import '../providers/catalog_sources_provider.dart';
+import '../providers/copy_priority_provider.dart';
 import '../providers/multi_server_provider.dart';
 import '../providers/seerr_account_provider.dart';
 import '../services/catalog/catalog_library_matcher.dart';
@@ -71,7 +73,7 @@ class CatalogItemDetailScreen extends StatefulWidget {
   State<CatalogItemDetailScreen> createState() => _CatalogItemDetailScreenState();
 }
 
-class _CatalogItemDetailScreenState extends State<CatalogItemDetailScreen> {
+class _CatalogItemDetailScreenState extends State<CatalogItemDetailScreen> with ListenableBindingsMixin {
   final _actionBarKey = GlobalKey<FocusableActionBarState>();
   final _backButtonFocusNode = FocusNode(debugLabel: 'catalog_detail_back');
   final _castSectionKey = GlobalKey();
@@ -132,6 +134,7 @@ class _CatalogItemDetailScreenState extends State<CatalogItemDetailScreen> {
     _syncDetailCollections(widget.item);
     unawaited(_resolveMatches(widget.item));
     unawaited(_loadDetail());
+    bindListenable(context.read<CopyPriorityProvider>(), _onCopyPriorityChanged);
     final sources = context.read<CatalogSourcesProvider>();
     _watchlistSource = sources.watchlistSourceFor(widget.item);
     final source = _watchlistSource;
@@ -212,7 +215,11 @@ class _CatalogItemDetailScreenState extends State<CatalogItemDetailScreen> {
   void _mergeMatches(List<MediaItem> matches) {
     if (!mounted) return;
     final focused = _libraryMatchNodesByKey.values.firstWhereOrNull((node) => node.hasPrimaryFocus);
-    final merged = mergeLibraryCopies(_matches ?? const [], matches);
+    final merged = mergeLibraryCopies(
+      _matches ?? const [],
+      matches,
+      compare: compareCopiesByPriority(context.read<CopyPriorityProvider>().priority),
+    );
     final keys = {for (final match in merged) match.globalKey};
     for (final key in _libraryMatchNodesByKey.keys.toList()) {
       if (!keys.contains(key)) _libraryMatchNodesByKey.remove(key)!.dispose();
@@ -242,6 +249,13 @@ class _CatalogItemDetailScreenState extends State<CatalogItemDetailScreen> {
         focused.requestFocus();
       });
     }
+  }
+
+  /// The ranking changed while the screen is open: re-sort the copies already
+  /// found, with no new lookup.
+  void _onCopyPriorityChanged() {
+    if (!mounted || _matches == null) return;
+    _mergeMatches(const []);
   }
 
   CatalogSource? get _ownSource =>

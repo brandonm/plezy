@@ -215,11 +215,6 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
                 create: (context) => ExploreProvider(context.read<CatalogSourcesProvider>()),
                 lazy: true,
               ),
-              Provider(
-                create: (context) => CatalogLibraryMatcher(context.read<MultiServerProvider>()),
-                dispose: (_, matcher) => matcher.dispose(),
-                lazy: true,
-              ),
               ChangeNotifierProvider(
                 create: (context) =>
                     HiddenLibrariesProvider(storageService: context.read<StorageService>(), profileId: activeId),
@@ -228,6 +223,15 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
               ChangeNotifierProvider(
                 create: (context) =>
                     CopyPriorityProvider(storageService: context.read<StorageService>(), profileId: activeId),
+                lazy: true,
+              ),
+              // After CopyPriorityProvider: its priority callback reads that provider from this context.
+              Provider(
+                create: (context) => CatalogLibraryMatcher(
+                  context.read<MultiServerProvider>(),
+                  priority: () => context.read<CopyPriorityProvider>().priority,
+                ),
+                dispose: (_, matcher) => matcher.dispose(),
                 lazy: true,
               ),
               // Null without a profile: picks are filed per profile only.

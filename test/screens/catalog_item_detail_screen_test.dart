@@ -19,6 +19,7 @@ import 'package:plezy/models/catalog/catalog_item.dart';
 import 'package:plezy/models/catalog/catalog_metadata.dart';
 import 'package:plezy/models/seerr/seerr_session.dart';
 import 'package:plezy/providers/catalog_sources_provider.dart';
+import 'package:plezy/providers/copy_priority_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
 import 'package:plezy/providers/seerr_account_provider.dart';
 import 'package:plezy/screens/catalog_item_detail_screen.dart';
@@ -31,6 +32,7 @@ import 'package:plezy/services/seerr/seerr_client.dart';
 import 'package:plezy/services/seerr/seerr_auth_service.dart';
 import 'package:plezy/services/seerr/seerr_constants.dart';
 import 'package:plezy/services/settings_service.dart';
+import 'package:plezy/services/storage_service.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/widgets/overlay_sheet.dart';
@@ -316,7 +318,10 @@ Future<void> _pumpDetail(
   SeerrCatalogSource? seerr,
   SeerrAccountProvider? account,
   bool settle = true,
+  CopyPriorityProvider? copyPriority,
 }) async {
+  final priorityProvider = copyPriority ?? CopyPriorityProvider(profileId: 'test');
+  if (copyPriority == null) addTearDown(priorityProvider.dispose);
   final sources = _FakeCatalogSourcesProvider(source, seerr: seerr);
   if (account != null) sources.followAccount(account);
   final serverManager = MultiServerManager();
@@ -332,6 +337,7 @@ Future<void> _pumpDetail(
       child: MultiProvider(
         providers: [
           Provider<CatalogLibraryMatcher>.value(value: matcher),
+          ChangeNotifierProvider<CopyPriorityProvider>.value(value: priorityProvider),
           ChangeNotifierProvider<CatalogSourcesProvider>.value(value: sources),
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServer),
           if (account != null) ChangeNotifierProvider<SeerrAccountProvider>.value(value: account),
@@ -364,6 +370,8 @@ Future<void> _pumpDetail(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  late StorageService storage;
+
   setUpAll(() async {
     LocaleSettings.setLocaleSync(AppLocale.en);
     // The facts section formats dates; `main.dart` does this at startup.
@@ -374,6 +382,7 @@ void main() {
     resetSharedPreferencesForTest();
     SettingsService.resetForTesting();
     await SettingsService.getInstance();
+    storage = await StorageService.getInstance();
     TvDetectionService.debugSetAppleTVOverride(true);
   });
 
@@ -569,6 +578,34 @@ void main() {
     expect(subtitles, hasLength(2));
     expect(subtitles.first, contains('4K'), reason: 'the 4K copy sorts above the HD one');
     expect(subtitles.last, contains('1080p'));
+  });
+
+  testWidgets('open catalog screen re-sorts when the priority changes', (tester) async {
+    final priority = CopyPriorityProvider(storageService: storage, profileId: 'test');
+    addTearDown(priority.dispose);
+    final source = _FakeCatalogSource();
+    MediaItem copy(String id, String library, String resolution) => testMediaItem(
+      id: id,
+      serverId: 'server-1',
+      serverName: 'Living Room',
+      libraryId: id,
+      libraryTitle: library,
+      mediaVersions: [MediaVersion(id: '$id-v', videoResolution: resolution, videoCodec: 'hevc', container: 'mkv')],
+    );
+
+    await _pumpDetail(
+      tester,
+      source,
+      copyPriority: priority,
+      matches: [copy('uhd', '4K Movies', '4k'), copy('hd', 'Movies', '1080')],
+    );
+    double top(String text) => tester.getTopLeft(find.text(text)).dy;
+    expect(top('4K Movies'), lessThan(top('Movies')), reason: 'unranked: best resolution first');
+
+    await priority.setPriority(['server-1:hd']);
+    await tester.pumpAndSettle();
+
+    expect(top('Movies'), lessThan(top('4K Movies')), reason: 'the ranked HD library now leads');
   });
 
   testWidgets('a re-resolve that comes back short keeps the copies already found', (tester) async {

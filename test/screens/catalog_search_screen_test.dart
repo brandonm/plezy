@@ -6,6 +6,7 @@ import 'package:plezy/media/media_kind.dart';
 import 'package:plezy/models/catalog/catalog_item.dart';
 import 'package:plezy/models/catalog/catalog_metadata.dart';
 import 'package:plezy/providers/catalog_sources_provider.dart';
+import 'package:plezy/providers/copy_priority_provider.dart';
 import 'package:plezy/screens/catalog_item_detail_screen.dart';
 import 'package:plezy/screens/catalog_search_screen.dart';
 import 'package:plezy/services/catalog/catalog_source.dart';
@@ -226,6 +227,8 @@ Future<void> _pumpMenuSearch(WidgetTester tester, _FakeSearchSource source, {req
   final manager = MultiServerManager();
   final multiServer = testMultiServerProvider(manager);
   final matcher = _FakeCatalogLibraryMatcher(multiServer);
+  final copyPriority = CopyPriorityProvider(profileId: 'test');
+  addTearDown(copyPriority.dispose);
   addTearDown(manager.dispose);
   addTearDown(multiServer.dispose);
   addTearDown(matcher.dispose);
@@ -236,6 +239,7 @@ Future<void> _pumpMenuSearch(WidgetTester tester, _FakeSearchSource source, {req
       child: MultiProvider(
         providers: [
           Provider<CatalogLibraryMatcher>.value(value: matcher),
+          ChangeNotifierProvider<CopyPriorityProvider>.value(value: copyPriority),
           ChangeNotifierProvider<CatalogSourcesProvider>.value(value: sources),
         ],
         child: MaterialApp(

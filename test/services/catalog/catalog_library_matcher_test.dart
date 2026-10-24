@@ -58,11 +58,13 @@ class _Harness {
   late final MultiServerProvider multiServer;
   late final CatalogLibraryMatcher matcher;
 
-  _Harness({DateTime Function()? now}) {
+  _Harness({DateTime Function()? now, List<String> Function()? priority}) {
     manager = MultiServerManager();
     aggregation = _FakeDataAggregationService(manager);
     multiServer = MultiServerProvider(manager, aggregation);
-    matcher = now == null ? CatalogLibraryMatcher(multiServer) : CatalogLibraryMatcher.withClock(multiServer, now);
+    matcher = now == null
+        ? CatalogLibraryMatcher(multiServer, priority: priority)
+        : CatalogLibraryMatcher.withClock(multiServer, now, priority: priority);
   }
 
   void dispose() {
@@ -130,6 +132,49 @@ class _LiveHarness {
 }
 
 void main() {
+  group('copy priority', () {
+    const item = CatalogItem(
+      source: CatalogSourceId.trakt,
+      kind: MediaKind.movie,
+      title: 'Ranked Movie',
+      ids: CatalogItemIds(tmdb: 7),
+    );
+    final first = testMediaItem(id: 'first', serverId: 'a', libraryId: '1');
+    final second = testMediaItem(id: 'second', serverId: 'b', libraryId: '2');
+
+    test('matcher orders copies by priority', () async {
+      final harness = _Harness(priority: () => ['b:2', 'a:1']);
+      addTearDown(harness.dispose);
+      harness.aggregation.responses.add(libraryLookupResult([first, second]));
+
+      final result = await harness.matcher.match(item);
+
+      expect(result.items.map((i) => i.id), ['second', 'first']);
+    });
+
+    test('cached entry re-sorts after a priority change without a lookup', () async {
+      var priority = <String>['a:1', 'b:2'];
+      final harness = _Harness(priority: () => priority);
+      addTearDown(harness.dispose);
+      harness.aggregation.responses.add(libraryLookupResult([first, second]));
+      expect((await harness.matcher.match(item)).items.map((i) => i.id), ['first', 'second']);
+
+      priority = ['b:2', 'a:1'];
+      final again = await harness.matcher.match(item);
+
+      expect(again.items.map((i) => i.id), ['second', 'first']);
+      expect(harness.aggregation.calls, hasLength(1), reason: 'served from the cache, not a new lookup');
+    });
+
+    test('without a priority callback the lookup order is kept', () async {
+      final harness = _Harness();
+      addTearDown(harness.dispose);
+      harness.aggregation.responses.add(libraryLookupResult([second, first]));
+
+      expect((await harness.matcher.match(item)).items.map((i) => i.id), ['second', 'first']);
+    });
+  });
+
   test('cancelled and non-queryable retries retain copies until this server executes a miss', () async {
     var now = DateTime.utc(2026, 7, 28);
     final harness = _LiveHarness(() => now);

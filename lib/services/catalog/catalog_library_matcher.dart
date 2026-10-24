@@ -26,16 +26,21 @@ class CatalogLibraryMatcher {
 
   final MultiServerProvider _multiServer;
   final DateTime Function() _now;
+
+  /// The user's library ranking, read on every [match] so a cached entry
+  /// re-sorts without a new lookup. Null keeps the default
+  /// [compareLibraryCopies] order.
+  final List<String> Function()? _priority;
   final Map<String, _Entry> _cache = {};
   Set<String> _serverIds = {};
   int _scopeGeneration = 0;
 
-  CatalogLibraryMatcher(this._multiServer) : _now = DateTime.now {
+  CatalogLibraryMatcher(this._multiServer, {this._priority}) : _now = DateTime.now {
     _listenToServerScope();
   }
 
   @visibleForTesting
-  CatalogLibraryMatcher.withClock(this._multiServer, this._now) {
+  CatalogLibraryMatcher.withClock(this._multiServer, this._now, {this._priority}) {
     _listenToServerScope();
   }
 
@@ -75,7 +80,7 @@ class CatalogLibraryMatcher {
     if (cached != null &&
         cached.scopeGeneration == scopeGeneration &&
         (_isAuthoritativeHit(cached.result) || _now().difference(cached.at) < negativeTtl)) {
-      return cached.result;
+      return _ranked(cached.result);
     }
 
     // A sequel entry's year is its own season's, not the parent show's, so a
@@ -97,7 +102,21 @@ class CatalogLibraryMatcher {
     if (scopeGeneration != _scopeGeneration) return match(item);
     final entry = _fold(cached?.byServer, result);
     _cache[key] = entry;
-    return entry.result;
+    return _ranked(entry.result);
+  }
+
+  /// [result] with its copies ordered by the current priority list. The cache
+  /// keeps the unranked answer so a later priority change re-sorts it.
+  LibraryLookupResult _ranked(LibraryLookupResult result) {
+    final priority = _priority;
+    if (priority == null) return result;
+    return (
+      items: [...result.items]..sort(compareCopiesByPriority(priority())),
+      succeededServerIds: result.succeededServerIds,
+      cancelledServerIds: result.cancelledServerIds,
+      failedServerIds: result.failedServerIds,
+      unqueriedServerIds: result.unqueriedServerIds,
+    );
   }
 
   /// Fold a wave into the last-known per-server answers.
