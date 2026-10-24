@@ -86,6 +86,37 @@ void main() {
       expect(accept(_episode(), _episode(id: 'e2', durationMs: 1_000_000)), isFalse);
     });
 
+    test('both sides have ids but no shared provider rejects even with matching duration', () {
+      expect(
+        accept(
+          _episode(durationMs: 1_000_000),
+          _episode(id: 'e2', durationMs: 1_000_000),
+          openedIds: const ExternalIds(tvdb: 99),
+          candIds: const ExternalIds(imdb: 'tt1'),
+        ),
+        isFalse,
+      );
+    });
+
+    test('ids on one side only falls back to duration', () {
+      expect(
+        accept(
+          _episode(durationMs: 1_000_000),
+          _episode(id: 'e2', durationMs: 1_050_000),
+          openedIds: const ExternalIds(tvdb: 99),
+        ),
+        isTrue,
+      );
+    });
+
+    test('zero duration counts as unknown', () {
+      expect(accept(_episode(durationMs: 0), _episode(id: 'e2', durationMs: 0)), isFalse);
+    });
+
+    test('exactly 10% accepts', () {
+      expect(accept(_episode(durationMs: 1_000_000), _episode(id: 'e2', durationMs: 1_100_000)), isTrue);
+    });
+
     test('season 0 never matches season 1 of the same number', () {
       expect(
         accept(
@@ -154,6 +185,10 @@ void main() {
         _movie('c', durationMs: 900_000, viewOffsetMs: 800_000),
       ];
       expect(furthestResumeOffsetMs(target, copies), 100_000);
+    });
+
+    test('copy exactly 5% off is kept', () {
+      expect(furthestResumeOffsetMs(target, [_movie('a', durationMs: 1_050_000, viewOffsetMs: 100_000)]), 100_000);
     });
 
     test('copy with an unknown duration is ignored', () {
