@@ -632,9 +632,12 @@ Future<_BestCopy?> _bestCopyOf(BuildContext context, MediaItem opened, {required
     final target = chooseTarget(copies, pick);
     final pickChoseIt = pick != null && (copyPickKey(target) == pick.key || target.libraryGlobalKey == pick.lib);
     final pickSignature = pickChoseIt ? pick.sig : null;
+    // The lookup leaves the opened item out when its server is offline, but
+    // its watch state is still where the user stopped.
+    final progress = [...copies, if (!copies.any((copy) => copy.globalKey == opened.globalKey)) opened];
     appLogger.d('Plain Play of ${opened.globalKey} starts ${target.globalKey}');
     return (
-      item: target.copyWith(viewOffsetMs: furthestResumeOffsetMs(target, copies) ?? target.viewOffsetMs),
+      item: target.copyWith(viewOffsetMs: furthestResumeOffsetMs(target, progress) ?? target.viewOffsetMs),
       mediaIndex: pickSignature == null
           ? null
           : MediaVersion.findMatchingIndex(target.mediaVersions ?? const [], {pickSignature}),

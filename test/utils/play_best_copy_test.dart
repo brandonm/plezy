@@ -243,10 +243,26 @@ void main() {
     final resolver = _FakeCopyResolver.answering([siloHd]);
     final harness = await _Harness.pump(tester, resolver: resolver, storage: storage);
 
-    final launched = await harness.play(tester, plex);
+    final launched = await harness.play(tester, plex.copyWith(viewOffsetMs: null));
 
     expect(launched.metadata.globalKey, siloHd.globalKey);
-    expect(launched.metadata.viewOffsetMs, isNull, reason: 'no copy in the result has progress');
+    expect(launched.metadata.viewOffsetMs, isNull, reason: 'no copy has progress');
+  });
+
+  testWidgets('opened item on an offline server still contributes its progress', (tester) async {
+    // Plex is offline, so the result holds Silo HD alone; Plex's row still
+    // says where the user stopped.
+    final resolver = _FakeCopyResolver.answering([siloHd]);
+    final harness = await _Harness.pump(tester, resolver: resolver, storage: storage);
+
+    final launched = await harness.play(tester, plex);
+    expect(launched.metadata.globalKey, siloHd.globalKey);
+    expect(launched.metadata.viewOffsetMs, 30 * _minute);
+
+    // A different cut of the opened title does not lend its position.
+    final otherCut = plex.copyWith(durationMs: 150 * _minute);
+    final cutLaunch = await harness.play(tester, otherCut);
+    expect(cutLaunch.metadata.viewOffsetMs, isNull);
   });
 
   testWidgets('without a resolver plays the opened item as navigateToVideoPlayer does', (tester) async {
