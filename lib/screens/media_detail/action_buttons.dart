@@ -31,7 +31,13 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
     // What Play and Play Version start: the movie, or a show's hero episode.
     final playbackTarget = _playbackTargetItem(metadata);
     final targetCopies = _copiesForTarget(playbackTarget);
-    final copyTarget = _copyTargetLabel(playbackTarget, targetCopies);
+    final copyLabel = _copyTargetLabel(playbackTarget, targetCopies);
+    // Play starts a completed download of its target from disk, whichever
+    // copy ranks first, so the label names no copy then.
+    final playsDownload =
+        copyLabel != null &&
+        context.select<DownloadProvider, bool>((downloads) => downloads.isDownloaded(playbackTarget!.globalKey));
+    final copyTarget = playsDownload ? null : copyLabel;
     final playButtonLabel = _getPlayButtonLabel(metadata, copyTarget: copyTarget);
     final playIcon = _getPlayButtonIcon(metadata);
     final playActionLabel = playIcon == Symbols.resume_rounded ? t.common.resume : t.common.play;

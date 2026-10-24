@@ -3426,6 +3426,7 @@ void main() {
       required _FakeCopyResolver resolver,
       CopyPickStore? picks,
       CopyPriorityProvider? priority,
+      Set<String> downloaded = const {},
       bool tv = false,
     }) async {
       TvDetectionService.debugSetAppleTVOverride(tv);
@@ -3446,6 +3447,14 @@ void main() {
       downloadManager.recoveryFuture = Future<void>.value();
       final downloadProvider = DownloadProvider.forTesting(downloadManager: downloadManager, database: db);
       await downloadProvider.ensureInitialized();
+      if (downloaded.isNotEmpty) {
+        downloadProvider.debugSeedState(
+          ownedDownloadKeys: downloaded,
+          downloads: {
+            for (final key in downloaded) key: DownloadProgress(globalKey: key, status: DownloadStatus.completed),
+          },
+        );
+      }
       final multi = testMultiServer(clients: clients, offline: offline);
       final watchState = WatchStateStore();
       final offlineWatch = OfflineWatchSyncService(database: db, serverManager: multi.manager);
@@ -3581,6 +3590,21 @@ void main() {
 
       expect([for (final launched in launches) launched.metadata.globalKey], [plexMovie.globalKey]);
       expect(resolver.asked, [plexMovie.globalKey]);
+    });
+
+    testWidgets('a completed download of the opened copy keeps plain Play, as Play plays it', (tester) async {
+      final resolver = _FakeCopyResolver()..answer(plexMovie, [siloMovie, plexMovie], aliases: movieAliases);
+      await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), clientFor(siloMovie)],
+        resolver: resolver,
+        downloaded: {plexMovie.globalKey},
+      );
+      await settleLookup(tester);
+
+      expect(resolver.asked, [plexMovie.globalKey]);
+      expect(find.textContaining('Play ·'), findsNothing, reason: 'Play starts the local file, not Silo');
     });
 
     testWidgets('a result holding only the opened copy keeps plain Play', (tester) async {
