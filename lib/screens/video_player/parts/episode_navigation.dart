@@ -112,8 +112,13 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
   /// The route commit owns player-to-player teardown semantics.
   /// [watchTogetherCopy] is the room's file, when the room asked for it: a
   /// server's item, so it opens outside the offline library. The player still
-  /// plays a download of the room's version.
-  Future<void> _replaceScreenWithPlayer(MediaItem metadata, {WatchCopy? watchTogetherCopy}) async {
+  /// plays a download of the room's version. [queueAnchor] is the origin
+  /// queue's entry when [metadata] is another library's copy of it.
+  Future<void> _replaceScreenWithPlayer(
+    MediaItem metadata, {
+    MediaItem? queueAnchor,
+    WatchCopy? watchTogetherCopy,
+  }) async {
     final version = watchTogetherCopy == null ? null : watchTogetherVersionOf(metadata, watchTogetherCopy);
     try {
       await navigateToVideoPlayer(
@@ -124,6 +129,7 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
         selectedMediaIndex: version?.index,
         selectedMediaSourceId: version?.sourceId,
         watchTogetherCopy: watchTogetherCopy,
+        queueAnchor: queueAnchor,
       );
     } finally {
       // No route commit (external player or failure): keep this screen usable.
@@ -135,15 +141,22 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
 
   /// Navigates to a new episode by reusing the current player whenever possible.
   ///
+  /// [anchor] is the queue's entry. The best copy of it plays ([_bestCopyOf]),
+  /// possibly from another server, while the queue stays on [anchor]: the
+  /// commit makes it [_queueAnchor].
+  ///
   /// Returns the reload outcome so [_playNext] can distinguish a failed
   /// in-place swap (previous session still on screen) from rejected or
   /// superseded attempts. The screen-replacement fallback reports
   /// [MediaReloadOutcome.rejected]: no in-place reload ran.
-  Future<MediaReloadOutcome> _navigateToEpisode(MediaItem episodeMetadata) async {
+  Future<MediaReloadOutcome> _navigateToEpisode(MediaItem anchor) async {
     _episode.lastReloadFailureReason = null;
+    final copy = _bestCopyOf(anchor);
+    final episodeMetadata = copy?.item ?? anchor;
+    final queueAnchor = episodeMetadata.globalKey == anchor.globalKey ? null : anchor;
     final currentPlayer = player;
     if (currentPlayer == null) {
-      if (mounted) unawaited(_replaceScreenWithPlayer(episodeMetadata));
+      if (mounted) unawaited(_replaceScreenWithPlayer(episodeMetadata, queueAnchor: queueAnchor));
       return MediaReloadOutcome.rejected;
     }
 
@@ -158,6 +171,12 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
           _effectiveSelectedMediaIndex >= 0 && _effectiveSelectedMediaIndex < _availableVersions.length
           ? _availableVersions[_effectiveSelectedMediaIndex].signature
           : null;
+      // Version indexes and signatures describe one server's version list. On
+      // a move to another server's copy (or back) the remembered pick names
+      // the version when it chose this copy; otherwise the copy's default
+      // plays.
+      final copyInPlay = queueAnchor != null || _queueAnchor != null;
+      final changesServer = copyInPlay && episodeMetadata.serverId != _currentMetadata.serverId;
       // Users who curate per-episode selections server-side (e.g. via Plex Auto
       // Languages) opt out of carrying tracks across episodes entirely: with no
       // preferences, both audio and subtitles start at the server-selected
@@ -187,9 +206,10 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
             );
       return await _reloadMediaInPlace(
         metadata: episodeMetadata,
-        selectedMediaIndex: _effectiveSelectedMediaIndex,
+        queueAnchor: queueAnchor,
+        selectedMediaIndex: changesServer ? 0 : _effectiveSelectedMediaIndex,
         selectedMediaSourceId: null,
-        preferredVersionSignature: currentVersionSignature,
+        preferredVersionSignature: changesServer ? copy?.pickSignature : currentVersionSignature,
         qualityPreset: _selectedQualityPreset,
         // Stream ids are per-part: the previous episode's audio id is
         // meaningless on the new item, so let preferences pick the track.

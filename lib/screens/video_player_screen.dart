@@ -23,6 +23,7 @@ import '../media/media_server_user_profile.dart';
 import '../media/media_item.dart';
 import '../media/media_item_types.dart';
 import '../media/media_server_client.dart';
+import '../media/copy_selection.dart';
 import '../media/episode_collection.dart';
 import '../media/live_tv_support.dart';
 import '../models/livetv_capture_buffer.dart';
@@ -48,6 +49,8 @@ import '../providers/playback_state_provider.dart';
 import '../providers/companion_remote_provider.dart';
 import '../services/fullscreen_state_manager.dart';
 import '../services/car_ux_restrictions_service.dart';
+import '../services/copy_pick_store.dart';
+import '../services/copy_resolver.dart';
 import '../services/driver_distraction.dart';
 import '../services/discord_rpc_service.dart';
 import '../services/trackers/tracker_coordinator.dart';
@@ -485,6 +488,10 @@ class VideoPlayerScreen extends StatefulWidget {
   /// The Watch Together room's file this launch opens, when the room asked
   /// for it.
   final WatchCopy? watchTogetherCopy;
+
+  /// The origin queue's entry when [metadata] is another server's copy of it:
+  /// next/previous keep walking the queue the user started in.
+  final MediaItem? queueAnchor;
   final Duration? initialPosition;
   final bool strictMediaSelection;
   final bool Function()? isLaunchCurrent;
@@ -519,6 +526,7 @@ class VideoPlayerScreen extends StatefulWidget {
     this.selectedAudioStreamId,
     this.live,
     this.watchTogetherCopy,
+    this.queueAnchor,
     this.initialPosition,
     this.strictMediaSelection = false,
     this.isLaunchCurrent,
@@ -723,6 +731,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   late MediaItem _currentMetadata;
+
+  /// The queue entry [_currentMetadata] stands in for while a copy of it from
+  /// another library plays; null when the queue's own item plays. Queue
+  /// adjacency and the queue cursor always use the entry, never the copy.
+  MediaItem? _queueAnchor;
   final EpisodeSessionState _episode = EpisodeSessionState();
 
   // In-flight media-source transition. At most one can run at a time: reloads
@@ -1327,7 +1340,22 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
   /// have committed so an EOF can take the present-next path.
   @visibleForTesting
   void debugCommitAdjacentEpisodesForTesting(AdjacentEpisodes adjacent) =>
-      _commitAdjacentEpisodes(_currentMetadata, adjacent, null);
+      _commitAdjacentEpisodes(_queueAnchor ?? _currentMetadata, adjacent, null);
+
+  /// The adjacency load the startup flow chains after the play queue, which
+  /// no widget test finishes without a live native core.
+  @visibleForTesting
+  Future<void> debugLoadAdjacentEpisodesForTesting() => _loadAdjacentEpisodes();
+
+  /// The transport's next command, awaited to its end.
+  @visibleForTesting
+  Future<void> debugPlayNextForTesting() => _playNext();
+
+  @visibleForTesting
+  MediaItem? get debugNextEpisodeForTesting => _episode.next;
+
+  @visibleForTesting
+  MediaItem get debugCurrentMetadataForTesting => _currentMetadata;
 
   /// The same router the OS media-session subscription feeds, built without
   /// standing up the full service layer.
@@ -1401,6 +1429,8 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
     );
 
     _currentMetadata = widget.metadata;
+    final queueAnchor = widget.queueAnchor;
+    _queueAnchor = queueAnchor == null || queueAnchor.globalKey == widget.metadata.globalKey ? null : queueAnchor;
     widget.launchObserver?.attach(_launchSnapshot, ownsPlayback: _ownsLaunchPlayback);
     _activeRouteGuard.activate(
       this,
@@ -1461,7 +1491,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
         // show, with synthetic ids tracked in the provider). For genuine
         // standalone playback (continue-watching, direct episode tap with no
         // queue launcher) clear any stale queue so prev/next stays consistent.
-        final meta = _currentMetadata;
+        final meta = _queueAnchor ?? _currentMetadata;
         if (playbackState.isItemInActiveQueue(meta)) {
           playbackState.setCurrentItem(meta);
         } else {

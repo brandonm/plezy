@@ -297,6 +297,8 @@ Future<ResolvedMediaVersionPreference?> resolveSavedMediaVersionFor(MediaItem me
 /// - [resolveWatchState]: Resolve [metadata] through [WatchStateStore] so the
 ///   resume offset/watched flag are session-fresh even when the caller holds a
 ///   stale list snapshot. Pass false for explicit intents like play-from-start.
+/// - [queueAnchor]: The origin queue's entry when [metadata] is another
+///   library's copy of it, so next/previous keep walking that queue.
 ///
 /// Returns a Future that completes with a boolean indicating whether the content
 /// was watched, or null if navigation was cancelled.
@@ -313,6 +315,7 @@ Future<bool?> navigateToVideoPlayer(
   bool isOffline = false,
   bool resolveWatchState = true,
   WatchCopy? watchTogetherCopy,
+  MediaItem? queueAnchor,
   bool Function()? isLaunchCurrent,
   Duration? initialPosition,
   bool strictMediaSelection = false,
@@ -500,6 +503,7 @@ Future<bool?> navigateToVideoPlayer(
         selectedQualityPreset: selectedQualityPreset,
         isOffline: isOffline,
         watchTogetherCopy: watchTogetherCopy,
+        queueAnchor: queueAnchor,
         initialPosition: initialPosition,
         strictMediaSelection: strictMediaSelection,
         isLaunchCurrent: isLaunchCurrent,

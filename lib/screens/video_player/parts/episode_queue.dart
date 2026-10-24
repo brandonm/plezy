@@ -11,22 +11,25 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
     // Skip play queue for live TV (would interfere with tuner session)
     if (widget.isLive) return;
 
-    if (!_currentMetadata.isEpisode) {
+    // The queue belongs to the origin entry when another library's copy of it
+    // plays.
+    final queueItem = _queueAnchor ?? _currentMetadata;
+    if (!queueItem.isEpisode) {
       return;
     }
 
     // Plex-only — Jellyfin's local queue is published by
     // EpisodeNavigationService._ensureLocalEpisodeQueue from
     // _loadAdjacentEpisodes, so this method is a no-op for it.
-    if (_currentMetadata.backend != MediaBackend.plex) return;
+    if (queueItem.backend != MediaBackend.plex) return;
 
     try {
-      final client = context.getPlexClientForServer(ServerId(_currentMetadata.serverId!));
+      final client = context.getPlexClientForServer(ServerId(queueItem.serverId!));
 
       final playbackState = context.read<PlaybackStateProvider>();
 
       // For episodes, grandparentId points to the show
-      final showRatingKey = _currentMetadata.grandparentId;
+      final showRatingKey = queueItem.grandparentId;
       if (showRatingKey == null) {
         appLogger.d('Episode missing grandparentId, skipping play queue creation');
         return;
@@ -38,8 +41,8 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
       // wipe a playlist queue (its key is the playlist id, not the show).
       // Only when the active queue is genuinely stale (item not in it)
       // do we clobber and create a fresh show queue.
-      if (playbackState.isItemInActiveQueue(_currentMetadata)) {
-        playbackState.setCurrentItem(_currentMetadata);
+      if (playbackState.isItemInActiveQueue(queueItem)) {
+        playbackState.setCurrentItem(queueItem);
         appLogger.d('Using existing play queue (context: ${playbackState.shuffleContextKey})');
         return;
       }
@@ -52,9 +55,9 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
       final playQueue = await client.createShowPlayQueue(
         showRatingKey: showRatingKey,
         shuffle: 0,
-        startingEpisodeKey: _currentMetadata.id,
-        librarySectionID: _currentMetadata.libraryId,
-        librarySectionTitle: _currentMetadata.libraryTitle,
+        startingEpisodeKey: queueItem.id,
+        librarySectionID: queueItem.libraryId,
+        librarySectionTitle: queueItem.libraryTitle,
       );
 
       if (playQueue != null && playQueue.items != null && playQueue.items!.isNotEmpty) {
@@ -64,8 +67,8 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
             id,
             center: center,
             window: window,
-            librarySectionID: _currentMetadata.libraryId,
-            librarySectionTitle: _currentMetadata.libraryTitle,
+            librarySectionID: queueItem.libraryId,
+            librarySectionTitle: queueItem.libraryTitle,
           ),
         );
 
@@ -81,17 +84,14 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
   Future<void> _loadAdjacentEpisodes({MediaItem? metadata, _PlaybackAttempt? attempt}) async {
     if (!mounted || widget.isLive) return;
 
-    final targetMetadata = metadata ?? _currentMetadata;
+    final targetMetadata = metadata ?? _queueAnchor ?? _currentMetadata;
     try {
       final adjacentEpisodes = _offlineLibraryMode
           ? _loadAdjacentEpisodesOffline(targetMetadata)
           : await _episode.navigation.loadAdjacentEpisodes(
               context: context,
               metadata: targetMetadata,
-              // The part actually being played, so the queue can skip sibling
-              // entries of a Plex multi-episode file (#1500). MediaSourceInfo
-              // carries the Plex numeric part id; MediaPart.id is its string form.
-              playedPartId: _currentMediaInfo?.partId?.toString(),
+              playedPartId: _queuePlayedPartId(targetMetadata),
             );
       _commitAdjacentEpisodes(targetMetadata, adjacentEpisodes, attempt);
     } catch (e, st) {
@@ -139,8 +139,30 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
     }
   }
 
+  /// The part the queue compares against to skip sibling entries of a Plex
+  /// multi-episode file (#1500) for [queueItem].
+  ///
+  /// Normally the part actually being played: MediaSourceInfo carries the
+  /// Plex numeric part id; MediaPart.id is its string form. While another
+  /// server's copy plays, its part id names nothing on the queue's server (or
+  /// an unrelated part there), so the entry's own part stands in: the one in
+  /// the version matching what plays, else its first version.
+  String? _queuePlayedPartId(MediaItem queueItem) {
+    if (queueItem.globalKey == _currentMetadata.globalKey) return _currentMediaInfo?.partId?.toString();
+    final versions = queueItem.mediaVersions ?? const <MediaVersion>[];
+    if (versions.isEmpty) return null;
+    final playing = _effectiveSelectedMediaIndex >= 0 && _effectiveSelectedMediaIndex < _availableVersions.length
+        ? _availableVersions[_effectiveSelectedMediaIndex].signature
+        : null;
+    final index = (playing == null ? null : MediaVersion.findMatchingIndex(versions, {playing})) ?? 0;
+    final parts = versions[index].parts;
+    return parts.isEmpty ? null : parts.first.id;
+  }
+
   void _commitAdjacentEpisodes(MediaItem targetMetadata, AdjacentEpisodes adjacentEpisodes, _PlaybackAttempt? attempt) {
-    if (!mounted || _currentMetadata.globalKey != targetMetadata.globalKey || (attempt != null && !attempt.isCurrent)) {
+    if (!mounted ||
+        (_queueAnchor ?? _currentMetadata).globalKey != targetMetadata.globalKey ||
+        (attempt != null && !attempt.isCurrent)) {
       return;
     }
     _setPlayerState(() {
@@ -149,6 +171,58 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
       _episode.nextStatus = adjacentEpisodes.nextStatus;
     });
     _primeNextEpisodePlaybackMetadata(adjacentEpisodes.next);
+    _lookUpCopiesOfNext(adjacentEpisodes.next);
+  }
+
+  /// Whether advancing to the queue's [episode] may play another library's
+  /// copy of it. Only a plain series queue qualifies: playlists, collections,
+  /// launcher play queues and shuffle keep their own items, and so do Watch
+  /// Together, offline playback and Live TV.
+  bool _mayPlayCopyOf(MediaItem episode) {
+    if (!mounted || _offlineLibraryMode || widget.isLive || !episode.isEpisode) return false;
+    if (_watchTogetherRoom() != null) return false;
+    final playbackState = context.read<PlaybackStateProvider?>();
+    return playbackState != null &&
+        playbackState.isQueueActive &&
+        !playbackState.isShuffleActive &&
+        episode.grandparentId != null &&
+        playbackState.shuffleContextKey == episode.grandparentId;
+  }
+
+  /// Warms the profile's copy lookup for the next episode, so the advance
+  /// can read it without waiting ([_bestCopyOf]).
+  void _lookUpCopiesOfNext(MediaItem? next) {
+    if (next == null || !_mayPlayCopyOf(next)) return;
+    final resolver = context.read<CopyResolver?>();
+    if (resolver == null) return;
+    unawaited(
+      resolver
+          .episodeCopiesOf(next)
+          .then<void>(
+            (_) {},
+            onError: (Object e, StackTrace st) =>
+                appLogger.w('Copy lookup for the next episode failed', error: e, stackTrace: st),
+          ),
+    );
+  }
+
+  /// The copy to play for the queue's [episode] — the remembered pick, then
+  /// the ranking — from what the lookup already holds, or null to play
+  /// [episode] itself. [pickSignature] is the pick's version when the pick
+  /// chose this copy. Never waits: an unanswered lookup plays the queue's item.
+  ({MediaItem item, String? pickSignature})? _bestCopyOf(MediaItem episode) {
+    try {
+      if (!_mayPlayCopyOf(episode)) return null;
+      final resolved = context.read<CopyResolver?>()?.peek(episode);
+      if (resolved == null) return null;
+      final pick = context.read<CopyPickStore?>()?.read(resolved.aliases)?.ref;
+      final chosen = chooseTarget(resolved.copies, pick);
+      final pickChoseIt = pick != null && (copyPickKey(chosen) == pick.key || chosen.libraryGlobalKey == pick.lib);
+      return (item: chosen, pickSignature: pickChoseIt ? pick.sig : null);
+    } catch (e, st) {
+      appLogger.w('Could not choose a copy of the next episode', error: e, stackTrace: st);
+      return null;
+    }
   }
 
   /// Best-effort prefetch of the next episode's full metadata row into the

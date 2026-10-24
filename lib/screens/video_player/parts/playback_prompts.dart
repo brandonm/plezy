@@ -277,7 +277,7 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
     // background; the prompt needs its target now.
     if (_episode.next == null) {
       final metadata = _currentMetadata;
-      await _loadAdjacentEpisodes(metadata: metadata);
+      await _loadAdjacentEpisodes(metadata: _queueAnchor ?? metadata);
       if (!mounted || _currentMetadata != metadata) return;
     }
     if (_episode.isLoadingNext || _episode.showPlayNextDialog || _showStillWatchingPrompt) return;

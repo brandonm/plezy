@@ -358,12 +358,18 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
   /// release) arms track selection without playing, the same way a Watch
   /// Together-owned start does. The caller owns starting playback.
   ///
+  /// [queueAnchor] is the queue entry [metadata] is a copy of, when it is
+  /// another library's copy ([VideoPlayerScreenState._queueAnchor]). It
+  /// becomes the screen's anchor when the replacement opens; any other item
+  /// change clears it, and a reload of the same item keeps it.
+  ///
   /// The returned [MediaReloadOutcome] tells the caller what actually
   /// happened: only [MediaReloadOutcome.failed] means the previous session
   /// is still on screen with its (possibly dead) stream; user feedback for
   /// failures is shown here unless [showErrorUi] is false.
   Future<MediaReloadOutcome> _reloadMediaInPlace({
     required MediaItem metadata,
+    MediaItem? queueAnchor,
     int? selectedMediaIndex,
     String? selectedMediaSourceId,
     String? preferredVersionSignature,
@@ -729,6 +735,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
             didOpenReplacement = true;
             if (!attempt.isCurrent) return;
             _commitPlaybackSession(session);
+            if (isItemChange || queueAnchor != null) _queueAnchor = queueAnchor;
           },
         );
         if (!opened) return MediaReloadOutcome.superseded;
@@ -762,12 +769,12 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
         });
 
         try {
-          playbackState.setCurrentItem(metadata);
+          playbackState.setCurrentItem(_queueAnchor ?? metadata);
         } catch (e) {
           appLogger.d('playbackState.setCurrentItem failed', error: e);
         }
 
-        unawaited(_loadAdjacentEpisodes(metadata: metadata, attempt: attempt));
+        unawaited(_loadAdjacentEpisodes(metadata: _queueAnchor ?? metadata, attempt: attempt));
         if (!isCurrentReload()) return MediaReloadOutcome.superseded;
 
         if (_autoPipEnabled) {
