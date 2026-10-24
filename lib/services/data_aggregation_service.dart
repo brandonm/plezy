@@ -10,13 +10,13 @@ import '../media/media_person.dart';
 import '../media/media_server_client.dart';
 import '../media/search_hit.dart';
 import '../media/title_copies.dart';
-import '../exceptions/media_server_exceptions.dart';
 import '../utils/app_logger.dart';
 import '../utils/external_ids.dart';
 import '../utils/global_key_utils.dart';
 import '../utils/search_relevance.dart';
 import '../utils/media_server_http_client.dart';
 import '../utils/media_server_timeouts.dart';
+import '../utils/server_deadline.dart';
 import 'local_playback_history.dart';
 import 'multi_server_manager.dart';
 
@@ -88,12 +88,6 @@ typedef _FanOutResult<T> = ({
   Set<String> failedServerIds,
   Set<String> unqueriedServerIds,
 });
-
-/// Whether [error] is a client-side abort (client teardown mid-request)
-/// rather than a genuine server failure. Aggregation reports these servers
-/// in `cancelledServerIds` so callers can tell a *disrupted* pass — whose
-/// results say nothing about actual content — from a settled failure.
-bool _isCancellation(Object error) => error is MediaServerHttpException && error.isCancellation;
 
 Map<String, int> _searchKindCounts(Iterable<MediaItem> items) {
   final counts = <String, int>{};
@@ -174,7 +168,7 @@ class DataAggregationService {
       try {
         return (serverId: entry.key, items: await fetch(entry.key, entry.value));
       } catch (e, stackTrace) {
-        if (_isCancellation(e)) {
+        if (isClientCancellation(e)) {
           cancelledServerIds.add(entry.key);
           appLogger.d('Cancelled (client abort): ${failureMessage(entry.key)}');
         } else {
@@ -196,36 +190,6 @@ class DataAggregationService {
       unqueriedServerIds: {
         for (final result in results)
           if (result.serverId != null && result.items == null) result.serverId!,
-      },
-    );
-  }
-
-  /// Runs one server's leg of a fan-out under [deadline]. The legs' results
-  /// are shown together, so without a bound one server that accepted the
-  /// connection and then stopped answering would hold back every other
-  /// server's results for its whole HTTP budget.
-  ///
-  /// [run] gets its own [AbortController], aborted with [parent] and on
-  /// expiry. Expiry fails the leg as a timeout — a failure, not a
-  /// cancellation, so [_fanOut] lists the server in `failedServerIds` — and
-  /// drops whatever arrives later. A backend call that takes no abort keeps
-  /// its request running to the HTTP layer's own budget.
-  static Future<R> _withinServerDeadline<R>(
-    Duration deadline, {
-    required String operation,
-    AbortController? parent,
-    required Future<R> Function(AbortController abort) run,
-  }) {
-    final leg = AbortController();
-    if (parent != null) unawaited(parent.trigger.then((_) => leg.abort()));
-    return run(leg).timeout(
-      deadline,
-      onTimeout: () {
-        leg.abort();
-        throw MediaServerHttpException(
-          type: MediaServerHttpErrorType.connectionTimeout,
-          message: '$operation exceeded its ${deadline.inSeconds}s budget',
-        );
       },
     );
   }
@@ -257,7 +221,7 @@ class DataAggregationService {
     final fetched = await _fanOut<MediaLibrary>(
       clients,
       failureMessage: (serverId) => 'Failed neutral library fetch from $serverId',
-      fetch: (serverId, client) => _withinServerDeadline(
+      fetch: (serverId, client) => withinServerDeadline(
         MediaServerTimeouts.libraryListServerDeadline,
         operation: 'Library fetch on $serverId',
         run: (_) => client.fetchLibraries(),
@@ -734,7 +698,7 @@ class DataAggregationService {
           results[index] = hubs;
           if (hubs.isNotEmpty || (!diagnostics.failed && !diagnostics.cancelled)) succeeded = true;
         } catch (e, st) {
-          if (_isCancellation(e)) {
+          if (isClientCancellation(e)) {
             cancelled = true;
             appLogger.d('Cancelled library hub fetch for ${library.globalKey}');
           } else {
@@ -821,7 +785,7 @@ class DataAggregationService {
           abort: abort,
           excludedLibraryIds: excludedLibraryIds,
         );
-        final items = await _withinServerDeadline(
+        final items = await withinServerDeadline(
           MediaServerTimeouts.searchServerDeadline,
           operation: 'Search on $serverId',
           parent: abort,
@@ -895,14 +859,14 @@ class DataAggregationService {
     required Set<String> excludedLibraryIds,
   }) async {
     try {
-      return await _withinServerDeadline(
+      return await withinServerDeadline(
         MediaServerTimeouts.searchServerDeadline,
         operation: 'People search on $serverId',
         parent: abort,
         run: (legAbort) => client.searchPeople(query, abort: legAbort, excludedLibraryIds: excludedLibraryIds),
       );
     } catch (e, stackTrace) {
-      if (_isCancellation(e)) {
+      if (isClientCancellation(e)) {
         appLogger.d('People search cancelled on $serverId');
       } else {
         appLogger.w('People search failed on $serverId; keeping title results', error: e, stackTrace: stackTrace);
@@ -1012,7 +976,7 @@ class DataAggregationService {
     final fetched = await _fanOut<MediaItem>(
       clients,
       failureMessage: (serverId) => '$label failed on $serverId',
-      fetch: (serverId, client) => _withinServerDeadline(
+      fetch: (serverId, client) => withinServerDeadline(
         MediaServerTimeouts.libraryLookup,
         operation: '$label on $serverId',
         parent: abort,

@@ -49,6 +49,16 @@ class _Server implements MediaServerClient {
   /// While set, lookups wait on it.
   Completer<void>? gate;
 
+  /// One per lookup, in order: each holds one lookup, which answers with
+  /// [byIds] as it was when asked.
+  final List<Completer<void>> gates = [];
+
+  /// While set, `fetchExternalIds` waits on it.
+  Completer<void>? idsGate;
+
+  /// How long each lookup, listing and ID read takes.
+  Duration delay = Duration.zero;
+
   final List<MediaKind> lookups = [];
   final List<String> childrenOf = [];
 
@@ -67,9 +77,16 @@ class _Server implements MediaServerClient {
     ExternalSeasonRef? season,
   }) async {
     lookups.add(kind);
+    final answer = byIds[kind] ?? const <MediaItem>[];
+    if (gates.isNotEmpty) await gates.removeAt(0).future;
     if (gate != null) await gate!.future;
+    await _wait();
     if (error != null) throw error!;
-    return byIds[kind] ?? const [];
+    return answer;
+  }
+
+  Future<void> _wait() async {
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
   }
 
   @override
@@ -86,12 +103,17 @@ class _Server implements MediaServerClient {
   @override
   Future<List<MediaItem>> fetchChildren(String parentId) async {
     childrenOf.add(parentId);
+    await _wait();
     if (error ?? childrenError case final failure?) throw failure;
     return children[parentId] ?? const [];
   }
 
   @override
-  Future<ExternalIds> fetchExternalIds(String itemId) async => ids[itemId] ?? const ExternalIds();
+  Future<ExternalIds> fetchExternalIds(String itemId) async {
+    if (idsGate != null) await idsGate!.future;
+    await _wait();
+    return ids[itemId] ?? const ExternalIds();
+  }
 
   @override
   Future<MediaItem?> fetchItem(String id) async => null;
@@ -617,6 +639,152 @@ void main() {
 
     await copies.copiesOf(fixture.opened);
     expect(fixture.a.lookups, hasLength(2));
+  });
+
+  test('a library-change event during the load answers the caller but is not cached', () async {
+    final fixture = twoServerMovie();
+    final gate = Completer<void>();
+    fixture.a.gates.add(gate);
+    final copies = resolver();
+    final pending = copies.copiesOf(fixture.opened);
+    await pumpEventQueue();
+
+    LibraryContentNotifier().notifyChanged(
+      LibraryChangeEvent(serverId: ServerId('a'), libraryIds: const {'movies'}, itemsAdded: true),
+    );
+    await pumpEventQueue();
+    gate.complete();
+
+    expect(_keys(await pending), unorderedEquals(['a:m1', 'b:m9']));
+    expect(copies.peek(fixture.opened), isNull);
+    await copies.copiesOf(fixture.opened);
+    expect(fixture.a.lookups, hasLength(2));
+    expect(copies.peek(fixture.opened), isNotNull);
+  });
+
+  test('a background refetch finishing after a library-change drop does not bring the entry back', () async {
+    final fixture = twoServerMovie();
+    servers.online.remove('b');
+    final copies = resolver();
+    await copies.copiesOf(fixture.opened);
+    final gate = Completer<void>();
+    fixture.b.gates.add(gate);
+    servers.add(fixture.b);
+    await copies.copiesOf(fixture.opened); // starts b's leg in the background
+    await pumpEventQueue();
+
+    LibraryContentNotifier().notifyChanged(
+      LibraryChangeEvent(serverId: ServerId('a'), libraryIds: const {'movies'}, itemsAdded: true),
+    );
+    await pumpEventQueue();
+    expect(copies.peek(fixture.opened), isNull);
+    gate.complete();
+    await pumpEventQueue();
+
+    expect(copies.peek(fixture.opened), isNull);
+  });
+
+  test('an old background refetch finishing after a TTL reload does not overwrite the fresher entry', () async {
+    final fixture = twoServerMovie();
+    servers.online.remove('b');
+    var now = DateTime(2026, 10, 24);
+    final copies = resolver(now: () => now);
+    await copies.copiesOf(fixture.opened);
+    final gate = Completer<void>();
+    fixture.b.gates.add(gate);
+    servers.add(fixture.b);
+    await copies.copiesOf(fixture.opened); // b's leg in the background, held
+    await pumpEventQueue();
+
+    now = now.add(const Duration(minutes: 6));
+    fixture.b.byIds[MediaKind.movie] = [_movie('mNEW', 'b', library: '4k', backend: MediaBackend.jellyfin)];
+    expect(_keys(await copies.copiesOf(fixture.opened)), unorderedEquals(['a:m1', 'b:mNEW']));
+    gate.complete();
+    await pumpEventQueue();
+
+    expect(_keys(copies.peek(fixture.opened)!), unorderedEquals(['a:m1', 'b:mNEW']));
+  });
+
+  test('opened item on an offline server is excluded when another copy is online', () async {
+    final fixture = twoServerMovie();
+    final copies = resolver();
+    await copies.copiesOf(fixture.opened);
+
+    servers.online.remove('a');
+
+    expect(_keys(await copies.copiesOf(fixture.opened)), ['b:m9']);
+    expect(_keys(copies.peek(fixture.opened)!), ['b:m9']);
+  });
+
+  test('all copies offline returns the opened item alone', () async {
+    final fixture = twoServerMovie();
+    final copies = resolver();
+    await copies.copiesOf(fixture.opened);
+
+    servers.online.clear();
+
+    expect((await copies.copiesOf(fixture.opened)).copies, [same(fixture.opened)]);
+    expect(copies.peek(fixture.opened)!.copies, [same(fixture.opened)]);
+  });
+
+  test('a cold episode read runs its server calls in parallel', () {
+    fakeAsync((async) {
+      final fixture = siloShow();
+      // Two candidates in one library: their IDs are read side by side too.
+      fixture.silo.children['sHd'] = [
+        _episode('eHd', 'silo', showId: 'sHd', backend: MediaBackend.jellyfin),
+        _episode('eHd2', 'silo', showId: 'sHd', backend: MediaBackend.jellyfin),
+      ];
+      fixture.silo.ids['eHd2'] = const ExternalIds(tvdb: 555);
+      fixture.plex.delay = fixture.silo.delay = const Duration(milliseconds: 500);
+      ResolvedCopies? resolved;
+
+      unawaited(resolver().episodeCopiesOf(fixture.opened).then((copies) => resolved = copies));
+      // In parallel: show IDs (with the episode's own IDs alongside), the show
+      // lookup, the listings, the candidates' IDs: 4 x 0.5 s. Serially Silo's
+      // three listings and four ID reads alone are 3.5 s.
+      async.elapse(const Duration(milliseconds: 1900));
+      expect(resolved, isNull);
+      async.elapse(const Duration(milliseconds: 200));
+
+      expect(resolved, isNotNull);
+      expect(_keys(resolved!), hasLength(5));
+    });
+  });
+
+  test('dispose releases a read waiting on an ID fetch, and nothing more is asked', () async {
+    final fixture = twoServerMovie();
+    final idsGate = fixture.a.idsGate = Completer<void>();
+    final copies = resolver();
+    ResolvedCopies? resolved;
+    unawaited(copies.copiesOf(fixture.opened).then((copies) => resolved = copies));
+    await pumpEventQueue();
+    expect(resolved, isNull);
+
+    copies.dispose();
+    await pumpEventQueue();
+
+    expect(resolved?.copies, [same(fixture.opened)]);
+    idsGate.complete();
+    await pumpEventQueue();
+    expect(fixture.a.lookups, isEmpty);
+    expect(fixture.b.lookups, isEmpty);
+  });
+
+  test('a stalled ID fetch gives up at the lookup deadline and the lookup goes on without IDs', () {
+    fakeAsync((async) {
+      final fixture = twoServerMovie();
+      fixture.a.idsGate = Completer<void>();
+      ResolvedCopies? resolved;
+
+      unawaited(resolver().copiesOf(fixture.opened).then((copies) => resolved = copies));
+      async.elapse(const Duration(seconds: 19));
+      expect(resolved, isNull);
+      async.elapse(const Duration(seconds: 2));
+
+      expect(resolved?.copies, [same(fixture.opened)]);
+      expect(resolved?.aliases, isEmpty);
+    });
   });
 
   test('a lookup that throws leaves the opened item alone, uncached', () async {

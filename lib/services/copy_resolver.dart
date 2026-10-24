@@ -14,6 +14,7 @@ import '../utils/external_ids.dart';
 import '../utils/library_content_notifier.dart';
 import '../utils/media_server_http_client.dart';
 import '../utils/media_server_timeouts.dart';
+import '../utils/server_deadline.dart';
 import 'copy_pick_store.dart';
 import 'data_aggregation_service.dart';
 import 'multi_server_manager.dart';
@@ -31,9 +32,10 @@ class ResolvedCopies {
     this.aliases = const {},
   });
 
-  /// Best first, on servers online right now. The opened item is included
-  /// once, as the object the caller passed, whatever the lookup returned
-  /// for it.
+  /// Best-first, never empty; contains the opened item unless its server is
+  /// offline and another copy is online. Only copies on servers online right
+  /// now appear. The opened item appears once, as the object the caller
+  /// passed, whatever the lookup returned for it.
   final List<MediaItem> copies;
 
   /// Servers that failed, were cancelled, or were never asked, kept apart
@@ -80,6 +82,11 @@ class CopyResolver {
   final Map<String, _Entry> _entries = {};
   final Map<String, Future<_Entry>> _loading = {};
 
+  /// Per server, how many library-change events with changes have arrived.
+  /// A lookup that overlapped one for a server it asked may hold the
+  /// pre-change answer, so it is not cached ([_changedSince]).
+  final Map<String, int> _changes = {};
+
   /// Aborted on [dispose]; every lookup runs under it. A caller's own abort
   /// only stops that caller waiting, since others may share the lookup.
   final AbortController _lifetime = AbortController();
@@ -114,7 +121,9 @@ class CopyResolver {
 
   bool get isDisposed => _disposed;
 
-  /// Drops the cache and aborts lookups in flight; later reads answer with
+  /// Drops the cache and abandons lookups in flight: reads waiting on them
+  /// answer at once with the opened item alone, requests that take an abort
+  /// are aborted, and no further request is started. Later reads answer with
   /// the opened item alone.
   void dispose() {
     if (_disposed) return;
@@ -129,7 +138,7 @@ class CopyResolver {
   Future<ResolvedCopies> _resolve(MediaItem item, Future<_Entry> Function() lookUp, AbortController? abort) async {
     if (_disposed) return _alone(item);
     try {
-      final entry = await _waitUnless(abort, _current(item.globalKey, lookUp));
+      final entry = await _waitUnless(abort, _waitUnless(_lifetime, _current(item.globalKey, lookUp)));
       return _disposed ? _alone(item) : _view(entry, item);
     } catch (error, stackTrace) {
       if (abort?.isAborted ?? false) rethrow;
@@ -173,13 +182,16 @@ class CopyResolver {
     return entry;
   }
 
-  /// One lookup per [key] at a time: concurrent reads share it.
+  /// One lookup per [key] at a time: concurrent reads share it. Its answer
+  /// goes to them either way, but is cached only if no library change
+  /// arrived meanwhile for a server it asked.
   Future<_Entry> _load(String key, Future<_Entry> Function() lookUp) {
     final pending = _loading[key];
     if (pending != null) return pending;
     _entries.removeWhere((_, entry) => _isExpired(entry));
+    final changesBefore = Map.of(_changes);
     final future = lookUp().then((entry) {
-      if (!_disposed) _entries[key] = entry;
+      if (!_disposed && !_changedSince(changesBefore, entry.scopes.keys)) _entries[key] = entry;
       return entry;
     });
     _loading[key] = future;
@@ -190,16 +202,19 @@ class CopyResolver {
   }
 
   /// Re-asks [serverIds] for [entry] and folds the answers in, if [entry] is
-  /// still the one cached under [key]. A server already being re-asked is
-  /// not asked twice.
+  /// still the one cached under [key] and no library change arrived meanwhile
+  /// for those servers (the next read asks again). A server already being
+  /// re-asked is not asked twice.
   Future<void> _refetchLegs(String key, _Entry entry, Set<String> serverIds) {
     final start = serverIds.difference(entry.refetching.keys.toSet());
     if (start.isNotEmpty) {
+      final changesBefore = Map.of(_changes);
       final future = entry
           .lookUpLegs(start)
           .then(
             (legs) {
-              if (!_disposed && identical(_entries[key], entry)) entry.absorb(legs);
+              if (_disposed || !identical(_entries[key], entry)) return;
+              if (!_changedSince(changesBefore, legs.scopes.keys)) entry.absorb(legs);
             },
             onError: (Object error, StackTrace stackTrace) {
               appLogger.w('Copy lookup refetch failed for $key on $start', error: error, stackTrace: stackTrace);
@@ -219,9 +234,14 @@ class CopyResolver {
 
   bool _isExpired(_Entry entry) => _now().difference(entry.fetchedAt) > copyLookupTtl;
 
+  /// Whether a library change arrived for any of [serverIds] since
+  /// [changesBefore] was taken from [_changes].
+  bool _changedSince(Map<String, int> changesBefore, Iterable<String> serverIds) =>
+      serverIds.any((serverId) => _changes[serverId] != changesBefore[serverId]);
+
   /// [entry]'s copies on servers online now (and under the session they were
   /// fetched with), the opened item swapped in for its own row, overlaid and
-  /// sorted.
+  /// sorted. When none is online, the opened item alone, as [_alone] answers.
   ResolvedCopies _view(_Entry entry, MediaItem opened) {
     final online = _serverManager.visibleOnlineClients;
     bool live(MediaItem copy) {
@@ -232,12 +252,14 @@ class CopyResolver {
 
     final ownShow = entry.ownShow;
     final own = ownShow == null ? opened : stampFromShow(opened, ownShow);
-    final copies = [
+    final reachable = [
       if (online.containsKey(opened.serverId)) own,
       for (final serverCopies in entry.copiesByServer.values)
         for (final copy in serverCopies)
           if (copy.globalKey != opened.globalKey && live(copy)) copy,
-    ].map(_freshWatchState).toList()..sort(compareCopiesByPriority(_priority()));
+    ];
+    final copies = (reachable.isEmpty ? [own] : reachable).map(_freshWatchState).toList()
+      ..sort(compareCopiesByPriority(_priority()));
     return ResolvedCopies(
       copies: copies,
       failedServerIds: {...entry.failed},
@@ -258,14 +280,25 @@ class CopyResolver {
 
   Set<String> _allOnline() => _serverManager.visibleOnlineClients.keys.toSet();
 
+  /// [run] under the per-server lookup deadline, and abandoned at once on
+  /// [dispose] even when the backend call it makes takes no abort.
+  Future<T> _bounded<T>(String operation, Future<T> Function(AbortController abort) run) {
+    _lifetime.throwIfAborted();
+    return _waitUnless(
+      _lifetime,
+      withinServerDeadline(MediaServerTimeouts.libraryLookup, operation: operation, parent: _lifetime, run: run),
+    );
+  }
+
   /// [itemId]'s catalogue IDs from [serverId], or none when that server is
-  /// offline or can't say.
+  /// offline or can't say. Throws only when [dispose] abandoned it.
   Future<ExternalIds> _idsOf(String? serverId, String? itemId) async {
     final client = _serverManager.visibleOnlineClients[serverId];
     if (client == null || itemId == null) return const ExternalIds();
     try {
-      return await client.fetchExternalIds(itemId);
+      return await _bounded('External IDs of $serverId:$itemId', (_) => client.fetchExternalIds(itemId));
     } catch (error, stackTrace) {
+      if (_lifetime.isAborted) rethrow;
       appLogger.w('Could not read external IDs of $serverId:$itemId', error: error, stackTrace: stackTrace);
       return const ExternalIds();
     }
@@ -328,10 +361,12 @@ class CopyResolver {
   Future<_Entry> _lookUpEpisode(MediaItem episode) async {
     final showKey = episode.seriesGlobalKey!;
     Future<_Entry> show() => _current(showKey, () => _lookUpShowOf(episode), awaitNewServers: true);
-    final ownIds = await _idsOf(episode.serverId, episode.id);
+    // Started now, so it runs alongside the show's IDs and lookup.
+    final ownIdsRead = _idsOf(episode.serverId, episode.id)..ignore();
 
     Future<_Legs> lookUpLegs(Set<String> serverIds) async {
       final shows = await show();
+      final ownIds = await ownIdsRead;
       final clients = _clientsIn(serverIds);
       final failed = <String>{};
       final cancelled = <String>{};
@@ -352,13 +387,14 @@ class CopyResolver {
         final showCopies = shows.copiesByServer[serverId] ?? const <MediaItem>[];
         try {
           copies.addAll(
-            await _withinLegDeadline(
+            await _bounded(
               'Episode copy lookup on $serverId',
               (abort) => _episodesOn(client, showCopies, episode, ownIds, abort),
             ),
           );
         } catch (error, stackTrace) {
-          if (_isCancellation(error)) {
+          if (_lifetime.isAborted) rethrow;
+          if (isClientCancellation(error)) {
             cancelled.add(serverId);
             appLogger.d('Cancelled: episode copy lookup on $serverId');
           } else {
@@ -386,7 +422,9 @@ class CopyResolver {
   }
 
   /// [opened]'s episode in each of [showCopies] on [client], stamped with
-  /// its show copy's library.
+  /// its show copy's library. The show copies are listed in parallel, and
+  /// their candidates' IDs read in parallel, so one server's leg costs two
+  /// round trips however many libraries hold the show.
   Future<List<MediaItem>> _episodesOn(
     MediaServerClient client,
     List<MediaItem> showCopies,
@@ -394,8 +432,18 @@ class CopyResolver {
     ExternalIds openedIds,
     AbortController abort,
   ) async {
-    final found = <MediaItem>[];
-    for (final showCopy in showCopies) {
+    Future<MediaItem?> judge(MediaItem candidate, MediaItem showCopy) async {
+      final stamped = stampFromShow(candidate, showCopy);
+      // The opened episode itself; the read swaps the opened object in.
+      if (stamped.globalKey == opened.globalKey) return stamped;
+      abort.throwIfAborted();
+      final ids = await _candidateIds(client, candidate.id, abort);
+      return acceptEpisodeCopy(opened: opened, openedIds: openedIds, candidate: stamped, candidateIds: ids)
+          ? stamped
+          : null;
+    }
+
+    Future<List<MediaItem?>> inShow(MediaItem showCopy) async {
       abort.throwIfAborted();
       final candidates = await client.episodesOf(
         showCopy,
@@ -403,20 +451,11 @@ class CopyResolver {
         episode: opened.index!,
         abort: abort,
       );
-      for (final candidate in candidates) {
-        final stamped = stampFromShow(candidate, showCopy);
-        // The opened episode itself; the read swaps the opened object in.
-        if (stamped.globalKey == opened.globalKey) {
-          found.add(stamped);
-          continue;
-        }
-        final ids = await _candidateIds(client, candidate.id, abort);
-        if (acceptEpisodeCopy(opened: opened, openedIds: openedIds, candidate: stamped, candidateIds: ids)) {
-          found.add(stamped);
-        }
-      }
+      return Future.wait([for (final candidate in candidates) judge(candidate, showCopy)]);
     }
-    return found;
+
+    final perShow = await Future.wait([for (final showCopy in showCopies) inShow(showCopy)]);
+    return [for (final found in perShow) ...found.nonNulls];
   }
 
   /// A candidate whose IDs can't be read is judged on its length alone.
@@ -424,27 +463,10 @@ class CopyResolver {
     try {
       return await client.fetchExternalIds(itemId);
     } catch (error, stackTrace) {
-      if (abort.isAborted || _isCancellation(error)) rethrow;
+      if (abort.isAborted || isClientCancellation(error)) rethrow;
       appLogger.w('Could not read external IDs of ${client.serverId}:$itemId', error: error, stackTrace: stackTrace);
       return const ExternalIds();
     }
-  }
-
-  /// [run] under [MediaServerTimeouts.libraryLookup], aborted on expiry or
-  /// [dispose]. Expiry is a failure, as in the aggregation fan-out.
-  Future<T> _withinLegDeadline<T>(String operation, Future<T> Function(AbortController abort) run) {
-    final leg = AbortController();
-    unawaited(_lifetime.trigger.then((_) => leg.abort()));
-    return run(leg).timeout(
-      MediaServerTimeouts.libraryLookup,
-      onTimeout: () {
-        leg.abort();
-        throw MediaServerHttpException(
-          type: MediaServerHttpErrorType.connectionTimeout,
-          message: '$operation exceeded its ${MediaServerTimeouts.libraryLookup.inSeconds}s budget',
-        );
-      },
-    );
   }
 
   /// Drops entries with a copy in a library [event] names (or in any library
@@ -452,6 +474,7 @@ class CopyResolver {
   void _onLibraryChanged(LibraryChangeEvent event) {
     if (_disposed || !event.hasChanges) return;
     final serverId = event.serverId.value;
+    _changes.update(serverId, (count) => count + 1, ifAbsent: () => 1);
     bool covers(_Entry entry) => (entry.copiesByServer[serverId] ?? const <MediaItem>[]).any(
       (copy) => event.targetsWholeServer || event.libraryIds.contains(copy.libraryId),
     );
@@ -463,8 +486,6 @@ class CopyResolver {
     _entries.removeWhere((key, entry) => dropped.contains(key) || dropped.contains(entry.showKey));
   }
 }
-
-bool _isCancellation(Object error) => error is MediaServerHttpException && error.isCancellation;
 
 MediaServerHttpException _cancelled(String operation) =>
     MediaServerHttpException(type: MediaServerHttpErrorType.cancelled, message: '$operation cancelled');
