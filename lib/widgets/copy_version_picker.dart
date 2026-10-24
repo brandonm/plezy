@@ -14,8 +14,16 @@ typedef CopyVersionChoice = ({MediaItem copy, int versionIndex, bool reset});
 /// [copy]'s server and library as one name, "Silo Movies 4K Remux", or its
 /// server alone when the copy has no library title; null when it has neither.
 String? copyLibraryName(MediaItem copy) {
-  final name = [?copy.serverName, ?copy.libraryTitle].join(' ');
-  return name.isEmpty ? null : name;
+  final (server, library) = (copy.serverName, copy.libraryTitle);
+  if (server != null && library != null) return t.mediaMenu.copyName(server: server, library: library);
+  return server ?? library;
+}
+
+/// [copy]'s server and library as a picker row names them, "Silo · Movies 4K".
+String _copySource(MediaItem copy) {
+  final (server, library) = (copy.serverName, copy.libraryTitle);
+  if (server != null && library != null) return t.mediaMenu.copySource(server: server, library: library);
+  return server ?? library ?? '';
 }
 
 /// How many versions [copies] offer in all. A copy whose version list the
@@ -52,7 +60,13 @@ Future<CopyVersionChoice?> showCopyVersionPicker(BuildContext context, ResolvedC
 
 List<({IconData? icon, String label, CopyVersionChoice value})> _copyRows(MediaItem copy) {
   final versions = copy.mediaVersions ?? const <MediaVersion>[];
-  String label(MediaVersion? version) => [?copy.serverName, ?copy.libraryTitle, ?version?.displayLabel].join(' · ');
+  final source = _copySource(copy);
+  String label(MediaVersion? version) {
+    if (version == null) return source;
+    if (source.isEmpty) return version.displayLabel;
+    return t.mediaMenu.copyVersion(source: source, version: version.displayLabel);
+  }
+
   if (versions.isEmpty) {
     return [(icon: Symbols.video_file_rounded, label: label(null), value: (copy: copy, versionIndex: 0, reset: false))];
   }

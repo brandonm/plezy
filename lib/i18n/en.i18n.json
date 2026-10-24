@@ -763,6 +763,9 @@
     "playFromBeginning": "Play from Beginning",
     "playVersion": "Play Version...",
     "playOn": "Play · $target",
+    "copyName": "$server $library",
+    "copySource": "$server · $library",
+    "copyVersion": "$source · $version",
     "usePriorityOrder": "Use priority order"
   },
   "mediaDetail": {
@@ -1199,6 +1202,7 @@
     "recentlyPlayedIn": "Recently Played in ${library}",
     "mostPlayedIn": "Most Played in ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "$episode · $target",
     "overview": "Overview",
     "cast": "Cast",
     "extras": "Trailers & Extras",

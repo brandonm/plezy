@@ -26,6 +26,7 @@ extension _MediaDetailCopyTargets on _MediaDetailScreenState {
 
   void _retargetCopies(MediaItem? target) {
     _copiesTargetKey = target?.globalKey;
+    _copiesTargetItem = target;
     final generation = ++_copyGeneration;
     _copiesTimer?.cancel();
     _copiesTimer = null;
@@ -57,7 +58,7 @@ extension _MediaDetailCopyTargets on _MediaDetailScreenState {
       if (generation != _copyGeneration || !_canUseDetail) return;
       _targetCopies.value = _withPlayTarget(copies);
     } catch (e) {
-      if (!abort.isAborted) appLogger.d('Copy lookup failed for ${target.globalKey}', error: e);
+      if (!abort.isAborted) appLogger.w('Copy lookup failed for ${target.globalKey}', error: e);
     } finally {
       if (identical(_copiesAbort, abort)) _copiesAbort = null;
     }
@@ -70,11 +71,45 @@ extension _MediaDetailCopyTargets on _MediaDetailScreenState {
     return (copies: copies, target: chooseTarget(copies.copies, pick?.ref));
   }
 
-  /// After a Play Version pick or reset: the pick may name another copy now.
-  void _rechooseCopyTarget() {
+  /// Chooses again when a pick is written or cleared (from any Play Version
+  /// entry: the split segment, the ⋮ menu, an episode card's menu) or the
+  /// priority order changes while the page is open.
+  void _initCopyRankingListeners() {
+    final picks = context.read<CopyPickStore?>();
+    final priority = context.read<CopyPriorityProvider?>();
+    // Deferred: a notification may come mid-build, and the notifiers rebuild.
+    void onChanged() => scheduleMicrotask(_rechooseCopyTargets);
+    if (picks != null) bindListenable(picks.changes, onChanged);
+    if (priority != null) bindListenable(priority, onChanged);
+  }
+
+  /// The held copies chosen among again, with no new lookup: re-read from
+  /// the resolver's cache when it is warm, else re-sorted by the current
+  /// priority. The "Also in" row follows the priority too.
+  void _rechooseCopyTargets() {
     if (!_canUseDetail) return;
+    final resolver = context.read<CopyResolver?>();
     final held = _targetCopies.value;
-    if (held != null) _targetCopies.value = _withPlayTarget(held.copies);
+    final target = _copiesTargetItem;
+    if (held != null && target != null) {
+      _targetCopies.value = _withPlayTarget(resolver?.peek(target) ?? _reranked(held.copies));
+    }
+    final alsoIn = _alsoInCopies.value;
+    if (alsoIn.length > 1) _alsoInCopies.value = _rerankedItems(alsoIn);
+  }
+
+  ResolvedCopies _reranked(ResolvedCopies copies) => ResolvedCopies(
+    copies: _rerankedItems(copies.copies),
+    failedServerIds: copies.failedServerIds,
+    cancelledServerIds: copies.cancelledServerIds,
+    unqueriedServerIds: copies.unqueriedServerIds,
+    aliases: copies.aliases,
+  );
+
+  List<MediaItem> _rerankedItems(List<MediaItem> copies) {
+    final priority = context.read<CopyPriorityProvider?>();
+    if (priority == null) return copies;
+    return [...copies]..sort(compareCopiesByPriority(priority.priority));
   }
 
   /// The copy Play's label names for [opened], or null for plain Play: only
@@ -119,7 +154,7 @@ extension _MediaDetailCopyTargets on _MediaDetailScreenState {
           if (copy.globalKey != show.globalKey) copy,
       ];
     } catch (e) {
-      if (!abort.isAborted) appLogger.d('Show copy lookup failed for ${show.globalKey}', error: e);
+      if (!abort.isAborted) appLogger.w('Show copy lookup failed for ${show.globalKey}', error: e);
     } finally {
       if (identical(_alsoInAbort, abort)) _alsoInAbort = null;
     }

@@ -2108,6 +2108,15 @@ class Translations$mediaMenu$en {
 	/// en: 'Play · $target'
 	String playOn({required Object target}) => 'Play · ${target}';
 
+	/// en: '$server $library'
+	String copyName({required Object server, required Object library}) => '${server} ${library}';
+
+	/// en: '$server · $library'
+	String copySource({required Object server, required Object library}) => '${server} · ${library}';
+
+	/// en: '$source · $version'
+	String copyVersion({required Object source, required Object version}) => '${source} · ${version}';
+
 	/// en: 'Use priority order'
 	String get usePriorityOrder => 'Use priority order';
 }
@@ -3309,6 +3318,9 @@ class Translations$discover$en {
 
 	/// en: 'S${season}E${episode}'
 	String playEpisode({required Object season, required Object episode}) => 'S${season}E${episode}';
+
+	/// en: '$episode · $target'
+	String playEpisodeOn({required Object episode, required Object target}) => '${episode} · ${target}';
 
 	/// en: 'Overview'
 	String get overview => 'Overview';
@@ -8765,6 +8777,9 @@ extension on Translations {
 			'mediaMenu.playFromBeginning' => 'Play from Beginning',
 			'mediaMenu.playVersion' => 'Play Version...',
 			'mediaMenu.playOn' => ({required Object target}) => 'Play · ${target}',
+			'mediaMenu.copyName' => ({required Object server, required Object library}) => '${server} ${library}',
+			'mediaMenu.copySource' => ({required Object server, required Object library}) => '${server} · ${library}',
+			'mediaMenu.copyVersion' => ({required Object source, required Object version}) => '${source} · ${version}',
 			'mediaMenu.usePriorityOrder' => 'Use priority order',
 			'mediaDetail.alsoIn' => 'Also in',
 			'rateSheet.title' => 'Rate',
@@ -9070,11 +9085,11 @@ extension on Translations {
 			'profiles.newProfile' => 'New profile',
 			'profiles.profileNameHint' => 'e.g. Guests, Kids, Family Room',
 			'profiles.pinProtectionOptional' => 'PIN protection (optional)',
+			_ => null,
+		} ?? switch (path) {
 			'profiles.pinExplain' => '4-digit PIN required to switch profiles.',
 			'profiles.continueButton' => 'Continue',
 			'profiles.pinsDontMatch' => 'PINs don\'t match',
-			_ => null,
-		} ?? switch (path) {
 			'profiles.tokenIdentityMismatch' => 'The Plex profile token resolved to an unexpected server',
 			'connections.sectionTitle' => 'Connections',
 			'connections.addConnection' => 'Add connection',
@@ -9157,6 +9172,7 @@ extension on Translations {
 			'discover.recentlyPlayedIn' => ({required Object library}) => 'Recently Played in ${library}',
 			'discover.mostPlayedIn' => ({required Object library}) => 'Most Played in ${library}',
 			'discover.playEpisode' => ({required Object season, required Object episode}) => 'S${season}E${episode}',
+			'discover.playEpisodeOn' => ({required Object episode, required Object target}) => '${episode} · ${target}',
 			'discover.overview' => 'Overview',
 			'discover.cast' => 'Cast',
 			'discover.extras' => 'Trailers & Extras',
@@ -9583,12 +9599,12 @@ extension on Translations {
 			'liveTv.recordShow' => 'Record show',
 			'liveTv.recordSettings.startEarly' => 'Start early (seconds)',
 			'liveTv.recordSettings.endLate' => 'End late (seconds)',
+			_ => null,
+		} ?? switch (path) {
 			'liveTv.recordSettings.newOnly' => 'Only new episodes',
 			'liveTv.recordSettings.anyChannel' => 'Record on any channel',
 			'liveTv.recordSettings.anyTime' => 'Record at any time',
 			'liveTv.recordSettings.skipInLibrary' => 'Skip episodes already in the library',
-			_ => null,
-		} ?? switch (path) {
 			'liveTv.recordSettings.keepUpTo' => 'Episodes to keep',
 			'liveTv.recordSettings.keepUpToHint' => '0 keeps every episode',
 			'liveTv.startingInMinutes' => ({required Object minutes}) => 'Starting in ${minutes} min',
@@ -10097,12 +10113,12 @@ extension on Translations {
 			'performanceOverlay.memory' => 'Memory',
 			'performanceOverlay.uiFps' => 'UI FPS',
 			'performanceOverlay.fps' => 'FPS',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.decoderAndroidHw' => 'Android HW',
 			'performanceOverlay.decoderNvidiaHw' => 'NVIDIA HW',
 			'performanceOverlay.decoderQualcommHw' => 'Qualcomm HW',
 			'performanceOverlay.decoderMediatekHw' => 'MediaTek HW',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.decoderExynosHw' => 'Exynos HW',
 			'performanceOverlay.decoderSoftware' => 'Software',
 			'performanceOverlay.decoderHardware' => 'Hardware',

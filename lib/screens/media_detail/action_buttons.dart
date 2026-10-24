@@ -113,7 +113,6 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       if (!_canUseDetail || playbackTarget == null) return;
       // The episode Play would start on a show page, not the show.
       final didNavigate = await promptAndPlayCopyVersion(context, playbackTarget, resolved: targetCopies?.copies);
-      _rechooseCopyTarget();
       // Same post-playback refresh plain Play gets from
       // navigateToVideoPlayerWithRefresh; the split segment is online-only.
       if (didNavigate && mounted) unawaited(_refreshWatchState());

@@ -23,6 +23,8 @@ import 'package:plezy/media/media_source_info.dart';
 import 'package:plezy/media/media_server_client.dart';
 import 'package:plezy/media/server_capabilities.dart';
 import 'package:plezy/mixins/deletion_aware.dart';
+import 'package:plezy/profiles/active_profile_provider.dart';
+import 'package:plezy/providers/copy_priority_provider.dart';
 import 'package:plezy/providers/download_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
 import 'package:plezy/providers/watch_state_store.dart';
@@ -64,6 +66,7 @@ import 'package:plezy/widgets/media_details_sheet.dart';
 import 'package:provider/provider.dart';
 
 import '../test_helpers/prefs.dart';
+import '../test_helpers/profile_stack.dart';
 import '../test_helpers/profile_navigation.dart';
 import '../test_helpers/media_items.dart';
 import '../test_helpers/multi_server_fixtures.dart';
@@ -3421,6 +3424,7 @@ void main() {
       required List<_FakeMediaServerClient> clients,
       required _FakeCopyResolver resolver,
       CopyPickStore? picks,
+      CopyPriorityProvider? priority,
       bool tv = false,
     }) async {
       TvDetectionService.debugSetAppleTVOverride(tv);
@@ -3444,7 +3448,10 @@ void main() {
       final multi = testMultiServer(clients: clients);
       final watchState = WatchStateStore();
       final offlineWatch = OfflineWatchSyncService(database: db, serverManager: multi.manager);
+      // The ⋮ menu resolves admin gating through the active profile.
+      final profiles = await ProfileStack.create(db: db, withStorage: false);
       addTearDown(() async {
+        await profiles.dispose();
         watchState.dispose();
         offlineWatch.dispose();
         downloadProvider.dispose();
@@ -3461,8 +3468,10 @@ void main() {
               ChangeNotifierProvider<DownloadProvider>.value(value: downloadProvider),
               ChangeNotifierProvider<WatchStateStore>.value(value: watchState),
               ChangeNotifierProvider<OfflineWatchSyncService>.value(value: offlineWatch),
+              ChangeNotifierProvider<ActiveProfileProvider>.value(value: profiles.active),
               Provider<CopyResolver>.value(value: resolver),
               Provider<CopyPickStore?>.value(value: picks),
+              if (priority != null) ChangeNotifierProvider<CopyPriorityProvider>.value(value: priority),
             ],
             child: MaterialApp(
               navigatorObservers: [_LaunchSpy(launches)],
@@ -3592,6 +3601,55 @@ void main() {
         1,
         reason: 'the in-server store still learns it',
       );
+    });
+
+    testWidgets('a pick from the ⋮ menu re-chooses the copy Play names', (tester) async {
+      final picks = CopyPickStore(storage, 'p1');
+      final resolver = _FakeCopyResolver()..answer(plexMovie, [siloMovie, plexMovie], aliases: movieAliases);
+      final launches = await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), clientFor(siloMovie)],
+        resolver: resolver,
+        picks: picks,
+      );
+      await settleLookup(tester);
+      expect(find.text('Play · Silo Movies 4K Remux'), findsOneWidget);
+
+      await tapAndSettle(
+        tester,
+        find.descendant(of: find.byType(FocusableActionBar), matching: find.byIcon(Symbols.more_vert_rounded)),
+      );
+      await tapAndSettle(tester, find.text(t.mediaMenu.playVersion).last);
+      await tapAndSettle(tester, inDialog('Server · Movies · ${vHd.displayLabel}'));
+      await keepOriginalQuality(tester);
+      await deliver(tester);
+
+      expect(launches.single.metadata.globalKey, plexMovie.globalKey);
+      expect(picks.read(movieAliases)?.key, plexMovie.globalKey);
+      expect(find.text('Play · Server Movies'), findsOneWidget, reason: 'plain Play now starts the picked copy');
+      expect(find.text('Play · Silo Movies 4K Remux'), findsNothing);
+    });
+
+    testWidgets('a priority change re-chooses the copy Play names', (tester) async {
+      final priority = CopyPriorityProvider(storageService: storage, profileId: 'p1');
+      addTearDown(priority.dispose);
+      final resolver = _FakeCopyResolver()..answer(plexMovie, [siloMovie, plexMovie], aliases: movieAliases);
+      await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), clientFor(siloMovie)],
+        resolver: resolver,
+        priority: priority,
+      );
+      await settleLookup(tester);
+      expect(find.text('Play · Silo Movies 4K Remux'), findsOneWidget);
+
+      await priority.setPriority([plexMovie.libraryGlobalKey!]);
+      await deliver(tester);
+
+      expect(find.text('Play · Server Movies'), findsOneWidget, reason: 'the newly top-ranked copy');
+      expect(resolver.asked, [plexMovie.globalKey], reason: 'no new lookup');
     });
 
     testWidgets('"Use priority order" row appears only with a pick and clears both stores', (tester) async {

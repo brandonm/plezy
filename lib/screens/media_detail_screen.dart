@@ -32,6 +32,7 @@ import '../media/media_hub.dart';
 import '../utils/provider_extensions.dart';
 import '../utils/plex_season_display.dart';
 import '../media/copy_selection.dart';
+import '../media/media_item_merge.dart' show compareCopiesByPriority;
 import '../media/media_item.dart';
 import '../media/episode_collection.dart';
 import '../media/media_item_types.dart';
@@ -414,6 +415,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   // action row.
   final ValueNotifier<_TargetCopies?> _targetCopies = ValueNotifier(null);
   String? _copiesTargetKey;
+  MediaItem? _copiesTargetItem;
   int _copyGeneration = 0;
   AbortController? _copiesAbort;
   Timer? _copiesTimer;
@@ -919,6 +921,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     _initWatchlistState();
     _initCommunityRatings();
     _initAlsoIn();
+    _initCopyRankingListeners();
   }
 
   /// Ask the connected trackers for this title's scores. They resolve the
@@ -2554,6 +2557,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   /// "Also in" row, else Play.
   void _focusContentTop() {
     if (_focusAlsoInRow()) return;
+    _focusPlayFromContent();
+  }
+
+  /// Back to the top of the page, on Play.
+  void _focusPlayFromContent() {
     _scrollController.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
     _playButtonFocusNode.requestFocus();
   }
@@ -3616,14 +3624,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                                             alsoIn,
                                             isTv: false,
                                             scale: 1,
-                                            onNavigateUp: () {
-                                              _scrollController.animateTo(
-                                                0,
-                                                duration: const Duration(milliseconds: 200),
-                                                curve: Curves.easeOut,
-                                              );
-                                              _playButtonFocusNode.requestFocus();
-                                            },
+                                            onNavigateUp: _focusPlayFromContent,
                                             onNavigateDown: _focusOverviewOrBelow,
                                           ),
                                         ),
@@ -5170,7 +5171,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         // Use the same format for both play and resume
         // (icon will indicate the difference)
         final label = t.discover.playEpisode(season: seasonNum.toString(), episode: episodeNum.toString());
-        return copyTarget == null ? label : '$label · $copyTarget';
+        return copyTarget == null ? label : t.discover.playEpisodeOn(episode: label, target: copyTarget);
       } else {
         final seasonNum = defaultPlaybackSeason(_seasons)?.index ?? 1;
         return t.discover.playEpisode(season: seasonNum.toString(), episode: '1');
