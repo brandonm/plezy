@@ -1,5 +1,9 @@
 part of '../../video_player_screen.dart';
 
+/// How long before the end of an item the next episode's copy lookup is
+/// re-issued at the latest ([_VideoPlayerEpisodeQueueMethods._refreshCopiesOfNextNearEnd]).
+const _nearEndCopyLookupLead = Duration(seconds: 90);
+
 extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
   /// Ensure a play queue exists for sequential episode playback
   Future<void> _ensurePlayQueue() async {
@@ -189,6 +193,26 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
         playbackState.shuffleContextKey == episode.grandparentId;
   }
 
+  /// Re-issues the next episode's copy lookup once the current item nears its
+  /// end — the Play Next prompt, a credits marker, or [_nearEndCopyLookupLead]
+  /// left, whichever comes first — once per item. The lookup made when next
+  /// committed is older than the resolver's TTL by the end of a typical
+  /// episode, and the advance only reads what is cached.
+  void _refreshCopiesOfNextNearEnd() {
+    final next = _episode.next;
+    if (next == null || _episode.nearEndCopyLookupKey == next.globalKey) return;
+    if (!_mayPlayCopyOf(next)) return;
+    _episode.nearEndCopyLookupKey = next.globalKey;
+    _lookUpCopiesOfNext(next);
+  }
+
+  /// [_refreshCopiesOfNextNearEnd] on a position tick within
+  /// [_nearEndCopyLookupLead] of the end of a known duration.
+  void _refreshCopiesOfNextForPosition(Duration position, Duration duration) {
+    if (widget.isLive || duration <= Duration.zero || duration - position > _nearEndCopyLookupLead) return;
+    _refreshCopiesOfNextNearEnd();
+  }
+
   /// Warms the profile's copy lookup for the next episode, so the advance
   /// can read it without waiting ([_bestCopyOf]).
   void _lookUpCopiesOfNext(MediaItem? next) {
@@ -208,16 +232,26 @@ extension _VideoPlayerEpisodeQueueMethods on VideoPlayerScreenState {
 
   /// The copy to play for the queue's [episode] — the remembered pick, then
   /// the ranking — from what the lookup already holds, or null to play
-  /// [episode] itself. [pickSignature] is the pick's version when the pick
-  /// chose this copy. Never waits: an unanswered lookup plays the queue's item.
-  ({MediaItem item, String? pickSignature})? _bestCopyOf(MediaItem episode) {
+  /// [episode] itself. The copy carries the furthest progress across copies
+  /// as its `viewOffsetMs`, which the reload starts from. [pickSignature] is
+  /// the pick's version when the pick chose this copy.
+  ///
+  /// Never waits on a server: an unanswered lookup plays the queue's item. A
+  /// completed download of [episode] plays from disk instead, as plain Play
+  /// does.
+  Future<({MediaItem item, String? pickSignature})?> _bestCopyOf(MediaItem episode) async {
     try {
       if (!_mayPlayCopyOf(episode)) return null;
       final resolved = context.read<CopyResolver?>()?.peek(episode);
       if (resolved == null) return null;
       final pick = context.read<CopyPickStore?>()?.read(resolved.aliases)?.ref;
-      final chosen = chooseTarget(resolved.copies, pick);
+      final downloads = context.read<DownloadProvider?>();
+      if (downloads != null && await downloads.getCompletedDownload(episode.globalKey) != null) return null;
+      if (!mounted) return null;
+      var chosen = chooseTarget(resolved.copies, pick);
       final pickChoseIt = pick != null && (copyPickKey(chosen) == pick.key || chosen.libraryGlobalKey == pick.lib);
+      final resumeMs = furthestResumeOffsetMs(chosen, resolved.copies) ?? chosen.viewOffsetMs;
+      if (resumeMs != chosen.viewOffsetMs) chosen = chosen.copyWith(viewOffsetMs: resumeMs);
       return (item: chosen, pickSignature: pickChoseIt ? pick.sig : null);
     } catch (e, st) {
       appLogger.w('Could not choose a copy of the next episode', error: e, stackTrace: st);

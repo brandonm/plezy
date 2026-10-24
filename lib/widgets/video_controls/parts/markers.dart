@@ -79,6 +79,7 @@ extension _PlexVideoControlsMarkerMethods on _PlexVideoControlsState {
       _currentMarker = foundMarker;
       _skipButtonDismissed = false;
     });
+    if (foundMarker.isCredits) widget.onCreditsMarker?.call();
 
     _startAutoSkipTimer(foundMarker);
 

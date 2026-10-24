@@ -732,9 +732,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
 
   late MediaItem _currentMetadata;
 
-  /// The queue entry [_currentMetadata] stands in for while a copy of it from
-  /// another library plays; null when the queue's own item plays. Queue
-  /// adjacency and the queue cursor always use the entry, never the copy.
+  /// The queue entry [_currentMetadata] stands in for while something other
+  /// than that entry object plays — a copy of it from another library, or the
+  /// entry re-stamped with another copy's progress; null when the queue's own item
+  /// plays. Queue adjacency and the queue cursor always use the entry, never
+  /// the copy.
   MediaItem? _queueAnchor;
   final EpisodeSessionState _episode = EpisodeSessionState();
 
@@ -1430,7 +1432,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     _currentMetadata = widget.metadata;
     final queueAnchor = widget.queueAnchor;
-    _queueAnchor = queueAnchor == null || queueAnchor.globalKey == widget.metadata.globalKey ? null : queueAnchor;
+    _queueAnchor = identical(queueAnchor, widget.metadata) ? null : queueAnchor;
     widget.launchObserver?.attach(_launchSnapshot, ownsPlayback: _ownsLaunchPlayback);
     _activeRouteGuard.activate(
       this,

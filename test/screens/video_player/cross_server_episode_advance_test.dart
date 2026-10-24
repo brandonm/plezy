@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/media/ids.dart';
+import 'package:plezy/models/download_models.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_item.dart';
 import 'package:plezy/media/media_kind.dart';
@@ -20,6 +21,7 @@ import 'package:plezy/models/transcode_quality_preset.dart';
 import 'package:plezy/mpv/mpv.dart';
 import 'package:plezy/providers/account_preferences_controller.dart';
 import 'package:plezy/providers/companion_remote_provider.dart';
+import 'package:plezy/providers/download_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
 import 'package:plezy/providers/playback_state_provider.dart';
 import 'package:plezy/screens/video_player_screen.dart';
@@ -91,6 +93,7 @@ void main() {
     required _CopyClient other,
     _FakeCopyResolver? resolver,
     CopyPickStore? pickStore,
+    DownloadProvider? downloads,
   }) async {
     final multi = testMultiServer(clients: [origin, other]);
     final offlineWatch = OfflineWatchSyncService(database: db, serverManager: multi.manager);
@@ -126,6 +129,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => CompanionRemoteProvider()),
           if (resolver != null) Provider<CopyResolver>.value(value: resolver),
           Provider<CopyPickStore?>.value(value: pickStore),
+          if (downloads != null) ChangeNotifierProvider<DownloadProvider>.value(value: downloads),
         ],
         child: MaterialApp(
           home: VideoPlayerScreen(
@@ -397,7 +401,16 @@ void main() {
         final silo = _CopyClient('silo', MediaBackend.jellyfin);
         final e1 = _episode('e1', 'plex-1', 1);
         final e2 = _episode('e2', 'plex-1', 2);
-        final siloHdE2 = _episode('hd-e2', 'silo', 2, show: 'silo-hd', backend: MediaBackend.jellyfin, library: 'hd');
+        // Silo HD's copy lists its versions 4K first; the pick names the 1080p one.
+        final siloHdE2 = _episode(
+          'hd-e2',
+          'silo',
+          2,
+          show: 'silo-hd',
+          backend: MediaBackend.jellyfin,
+          library: 'hd',
+          versions: _twoVersions.reversed.toList(),
+        );
         final silo4kE2 = _episode('4k-e2', 'silo', 2, show: 'silo-4k', backend: MediaBackend.jellyfin, library: '4k');
         final resolver = _FakeCopyResolver({
           e2.globalKey: [silo4kE2, if (pickFound) siloHdE2],
@@ -432,9 +445,11 @@ void main() {
             if (pickFound) {
               expect(opened.metadata.id, 'hd-e2', reason: 'the pick beats the ranking');
               expect(opened.preferredVersionSignature, '1080:h264:mkv');
+              expect(opened.selectedMediaIndex, 1, reason: "the pick's version in this copy's own list");
             } else {
               expect(opened.metadata.id, '4k-e2', reason: 'the ranking chooses when the picked copy is gone');
               expect(opened.preferredVersionSignature, isNull, reason: "the pick's version belongs to another copy");
+              expect(opened.selectedMediaIndex, 0);
             }
           },
         );
@@ -470,6 +485,289 @@ void main() {
         await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
         expect(state.debugNextEpisodeForTesting, same(e3));
       },
+    );
+  });
+
+  testWidgets('lookup refreshed near the end survives the 5-minute TTL', (tester) async {
+    final origin = _CopyClient('plex-1', MediaBackend.plex);
+    final silo = _CopyClient('silo', MediaBackend.jellyfin);
+    final e1 = _episode('e1', 'plex-1', 1);
+    final e2 = _episode('e2', 'plex-1', 2);
+    final siloE2 = _episode('s-e2', 'silo', 2, show: 'silo-show', backend: MediaBackend.jellyfin);
+    final resolver = _FakeCopyResolver({
+      e2.globalKey: [siloE2],
+    }, now: () => tester.binding.clock.now());
+
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      testBody: () async {
+        final screen = await pumpPlayer(
+          tester,
+          start: e1,
+          queue: [e1, e2],
+          origin: origin,
+          other: silo,
+          resolver: resolver,
+        );
+        final state = screen.key.currentState!;
+        await state.debugWirePlayerStreamsForTesting();
+        await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
+        expect(resolver.asked, [e2.globalKey]);
+
+        // A 40-minute episode: the lookup made at its start is long stale.
+        screen.player.tick(const Duration(minutes: 20));
+        await tester.pump(const Duration(minutes: 6));
+        expect(resolver.peek(e2), isNull, reason: 'precondition: the start-of-episode answer expired');
+        expect(resolver.asked, [e2.globalKey], reason: 'mid-episode ticks do not re-ask');
+
+        screen.player.tick(const Duration(minutes: 38, seconds: 31));
+        await tester.pump();
+        expect(resolver.asked, [e2.globalKey, e2.globalKey], reason: '89 s left: ask again');
+
+        await settle(tester, state.debugPlayNextForTesting);
+        expect(silo.opened.map((o) => o.metadata.id), ['s-e2']);
+        expect(origin.opened, isEmpty);
+      },
+    );
+  });
+
+  testWidgets('refresh fires once per episode', (tester) async {
+    await SettingsService.instance.write(SettingsService.autoPlayNextEpisode, false);
+    final origin = _CopyClient('plex-1', MediaBackend.plex);
+    final silo = _CopyClient('silo', MediaBackend.jellyfin);
+    final e1 = _episode('e1', 'plex-1', 1);
+    final e2 = _episode('e2', 'plex-1', 2);
+    final e3 = _episode('e3', 'plex-1', 3);
+    final siloE2 = _episode('s-e2', 'silo', 2, show: 'silo-show', backend: MediaBackend.jellyfin);
+    final resolver = _FakeCopyResolver({
+      e2.globalKey: [siloE2],
+    });
+
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      testBody: () async {
+        final screen = await pumpPlayer(
+          tester,
+          start: e1,
+          queue: [e1, e2, e3],
+          origin: origin,
+          other: silo,
+          resolver: resolver,
+        );
+        final state = screen.key.currentState!;
+        await state.debugWirePlayerStreamsForTesting();
+        await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
+        int asks(MediaItem episode) => resolver.asked.where((key) => key == episode.globalKey).length;
+        expect(asks(e2), 1);
+
+        // Every near-end signal in turn: 90 s left, later ticks, the prompt.
+        for (final left in const [90, 60, 20, 2]) {
+          screen.player.tick(const Duration(minutes: 40) - Duration(seconds: left));
+          await tester.pump();
+        }
+        screen.player.setCompleted(true);
+        state.debugCompleteVideoForTesting();
+        await pumpUntil(tester, () => state.debugPlayNextPromptVisibleForTesting);
+        expect(asks(e2), 2, reason: 'one refresh for this episode');
+
+        // The next episode gets its own refresh, once.
+        await settle(tester, state.debugPlayNextForTesting);
+        expect(silo.opened.map((o) => o.metadata.id), ['s-e2']);
+        await nextLoaded(tester, state, 'e3');
+        expect(asks(e3), 1);
+        for (final left in const [80, 40, 5]) {
+          screen.player.tick(const Duration(minutes: 40) - Duration(seconds: left));
+          await tester.pump();
+        }
+        expect(asks(e3), 2);
+        expect(asks(e2), 2);
+      },
+    );
+  });
+
+  testWidgets('the Play Next prompt re-asks for the next copies when no tick came near the end', (tester) async {
+    await SettingsService.instance.write(SettingsService.autoPlayNextEpisode, false);
+    final origin = _CopyClient('plex-1', MediaBackend.plex);
+    final silo = _CopyClient('silo', MediaBackend.jellyfin);
+    final e1 = _episode('e1', 'plex-1', 1);
+    final e2 = _episode('e2', 'plex-1', 2);
+    final resolver = _FakeCopyResolver({});
+
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      testBody: () async {
+        final screen = await pumpPlayer(
+          tester,
+          start: e1,
+          queue: [e1, e2],
+          origin: origin,
+          other: silo,
+          resolver: resolver,
+        );
+        final state = screen.key.currentState!;
+        await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
+        expect(resolver.asked, [e2.globalKey]);
+
+        // Credits that run to EOF end the item without a final position tick.
+        screen.player.setCompleted(true);
+        state.debugCompleteVideoForTesting();
+        await pumpUntil(tester, () => state.debugPlayNextPromptVisibleForTesting);
+        expect(resolver.asked, [e2.globalKey, e2.globalKey]);
+      },
+    );
+  });
+
+  testWidgets('downloaded next episode plays locally, not the ranked stream', (tester) async {
+    final origin = _CopyClient('plex-1', MediaBackend.plex);
+    final silo = _CopyClient('silo', MediaBackend.jellyfin);
+    final e1 = _episode('e1', 'plex-1', 1);
+    final e2 = _episode('e2', 'plex-1', 2);
+    final siloE2 = _episode('s-e2', 'silo', 2, show: 'silo-show', backend: MediaBackend.jellyfin);
+    final resolver = _FakeCopyResolver({
+      e2.globalKey: [siloE2],
+    });
+    final downloads = _Downloads({e2.globalKey});
+    addTearDown(downloads.dispose);
+
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      testBody: () async {
+        final screen = await pumpPlayer(
+          tester,
+          start: e1,
+          queue: [e1, e2],
+          origin: origin,
+          other: silo,
+          resolver: resolver,
+          downloads: downloads,
+        );
+        final state = screen.key.currentState!;
+        await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
+        await tester.pump();
+
+        await settle(tester, state.debugPlayNextForTesting);
+        expect(downloads.asked, contains(e2.globalKey));
+        expect(silo.opened, isEmpty, reason: 'the download outranks every stream');
+        // The origin item opens as today, where playback prefers its download.
+        expect(origin.opened.map((o) => o.metadata.id), ['e2']);
+        expect(state.debugCurrentMetadataForTesting, same(e2));
+      },
+    );
+  });
+
+  testWidgets('advance resumes the chosen copy at the furthest progress across copies', (tester) async {
+    final origin = _CopyClient('plex-1', MediaBackend.plex);
+    final silo = _CopyClient('silo', MediaBackend.jellyfin);
+    final e1 = _episode('e1', 'plex-1', 1);
+    // E2 was partly watched on the origin; Silo has no progress for it.
+    final e2 = _episode('e2', 'plex-1', 2, viewOffsetMs: 10 * 60 * 1000);
+    final siloE2 = _episode('s-e2', 'silo', 2, show: 'silo-show', backend: MediaBackend.jellyfin);
+    final resolver = _FakeCopyResolver({
+      e2.globalKey: [siloE2],
+    });
+
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      testBody: () async {
+        final screen = await pumpPlayer(
+          tester,
+          start: e1,
+          queue: [e1, e2],
+          origin: origin,
+          other: silo,
+          resolver: resolver,
+        );
+        final state = screen.key.currentState!;
+        await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
+        await tester.pump();
+
+        await settle(tester, state.debugPlayNextForTesting);
+        final opened = silo.opened.single;
+        expect(opened.metadata.id, 's-e2');
+        expect(opened.startPosition, const Duration(minutes: 10));
+        expect(screen.player.state.position, const Duration(minutes: 10), reason: 'the open starts there');
+      },
+    );
+  });
+
+  testWidgets("the origin's own copy resumes at another copy's progress and keeps its queue", (tester) async {
+    final origin = _CopyClient('plex-1', MediaBackend.plex);
+    final silo = _CopyClient('silo', MediaBackend.jellyfin);
+    final e1 = _episode('e1', 'plex-1', 1);
+    final e2 = _episode('e2', 'plex-1', 2);
+    final e3 = _episode('e3', 'plex-1', 3);
+    // The origin ranks first; the progress was made on Silo.
+    final siloE2 = _episode(
+      's-e2',
+      'silo',
+      2,
+      show: 'silo-show',
+      backend: MediaBackend.jellyfin,
+      viewOffsetMs: 7 * 60 * 1000,
+    );
+    final resolver = _FakeCopyResolver({
+      e2.globalKey: [e2, siloE2],
+    });
+
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      testBody: () async {
+        final screen = await pumpPlayer(
+          tester,
+          start: e1,
+          queue: [e1, e2, e3],
+          origin: origin,
+          other: silo,
+          resolver: resolver,
+        );
+        final state = screen.key.currentState!;
+        await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
+        await tester.pump();
+
+        await settle(tester, state.debugPlayNextForTesting);
+        final opened = origin.opened.single;
+        expect(opened.metadata.id, 'e2');
+        expect(opened.startPosition, const Duration(minutes: 7));
+        expect(screen.playbackState.currentQueueItem, same(e2));
+        await nextLoaded(tester, state, 'e3');
+      },
+    );
+  });
+
+  test('subtitle stream ids never match across servers, even when part ids collide', () {
+    MediaSourceInfo source(int partId) => MediaSourceInfo(
+      videoUrl: '',
+      audioTracks: const [],
+      subtitleTracks: const [],
+      chapters: const [],
+      partId: partId,
+    );
+    expect(
+      sameSubtitleSource(
+        previousServerId: 'plex-1',
+        previousMediaSourceId: null,
+        previousPartId: 501,
+        nextServerId: 'plex-1',
+        next: source(501),
+      ),
+      isTrue,
+      reason: 'the same part on the same server keeps its stream ids',
+    );
+    expect(
+      sameSubtitleSource(
+        previousServerId: 'plex-1',
+        previousMediaSourceId: null,
+        previousPartId: 501,
+        nextServerId: 'plex-2',
+        next: source(501),
+      ),
+      isFalse,
     );
   });
 
@@ -526,7 +824,7 @@ void main() {
           await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
           await tester.pump();
           expect(resolver.asked, isEmpty, reason: 'shuffle and playlists keep their own items');
-          resolver.answered.add(e2.globalKey);
+          resolver.answeredAt[e2.globalKey] = DateTime.now();
 
           await settle(tester, state.debugPlayNextForTesting);
           expect(origin.opened.map((o) => o.metadata.id), ['e2']);
@@ -560,6 +858,7 @@ MediaItem _episode(
   String? file,
   String? partId,
   List<MediaVersion>? versions,
+  int? viewOffsetMs,
 }) => testMediaItem(
   id: id,
   backend: backend,
@@ -570,6 +869,7 @@ MediaItem _episode(
   parentIndex: 1,
   index: index,
   durationMs: 40 * 60 * 1000,
+  viewOffsetMs: viewOffsetMs,
   libraryId: library,
   mediaVersions: versions ?? (file == null ? null : [_version('v-$id', partId ?? 'p-$id', file)]),
 );
@@ -636,30 +936,42 @@ class _CopyClient with PlaybackReportRecorder implements MediaServerClient {
 }
 
 /// Copies per origin episode, best first; [peek] answers only once
-/// [episodeCopiesOf] did, and never when [answers] is false.
+/// [episodeCopiesOf] did, for [copyLookupTtl] by [now] like the real
+/// resolver, and never when [answers] is false.
 class _FakeCopyResolver implements CopyResolver {
-  _FakeCopyResolver(this._copies, {this.answers = true});
+  _FakeCopyResolver(this._copies, {this.answers = true, DateTime Function()? now}) : _now = now ?? DateTime.now;
 
   static const aliases = {'show|tvdb:81189'};
 
   final Map<String, List<MediaItem>> _copies;
   final bool answers;
+  final DateTime Function() _now;
   final asked = <String>[];
-  final answered = <String>{};
+  final answeredAt = <String, DateTime>{};
 
-  ResolvedCopies _view(MediaItem episode) =>
-      ResolvedCopies(copies: [...?_copies[episode.globalKey], episode], aliases: aliases);
+  /// The listed copies, then [episode] unless the list already ranks it.
+  ResolvedCopies _view(MediaItem episode) {
+    final listed = _copies[episode.globalKey] ?? const <MediaItem>[];
+    return ResolvedCopies(
+      copies: [...listed, if (!listed.any((copy) => copy.globalKey == episode.globalKey)) episode],
+      aliases: aliases,
+    );
+  }
 
   @override
   Future<ResolvedCopies> episodeCopiesOf(MediaItem episode, {AbortController? abort}) {
     asked.add(episode.globalKey);
     if (!answers) return Completer<ResolvedCopies>().future;
-    answered.add(episode.globalKey);
+    answeredAt[episode.globalKey] = _now();
     return Future.value(_view(episode));
   }
 
   @override
-  ResolvedCopies? peek(MediaItem item) => answered.contains(item.globalKey) ? _view(item) : null;
+  ResolvedCopies? peek(MediaItem item) {
+    final at = answeredAt[item.globalKey];
+    if (at == null || _now().difference(at) > copyLookupTtl) return null;
+    return _view(item);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -668,6 +980,40 @@ class _FakeCopyResolver implements CopyResolver {
 class _AdvancePlayer extends FakeSyncPlayer {
   _AdvancePlayer()
     : super(playing: true, position: const Duration(seconds: 121), duration: const Duration(minutes: 40), rate: 1.0);
+
+  final _positions = StreamController<Duration>.broadcast();
+
+  /// The playhead moves, announced the way a real player ticks.
+  void tick(Duration position) {
+    setPosition(position);
+    _positions.add(position);
+  }
+
+  @override
+  PlayerStreams get streams {
+    final base = super.streams;
+    return PlayerStreams(
+      playing: base.playing,
+      completed: base.completed,
+      buffering: base.buffering,
+      position: _positions.stream,
+      duration: base.duration,
+      seekable: base.seekable,
+      buffer: base.buffer,
+      volume: base.volume,
+      rate: base.rate,
+      tracks: base.tracks,
+      track: base.track,
+      log: base.log,
+      error: base.error,
+      audioDevice: base.audioDevice,
+      audioDevices: base.audioDevices,
+      bufferRanges: base.bufferRanges,
+      playbackRestart: base.playbackRestart,
+      fileStarted: base.fileStarted,
+      backendSwitched: base.backendSwitched,
+    );
+  }
 
   @override
   String get playerType => 'mpv';
@@ -714,4 +1060,38 @@ class _AdvancePlayer extends FakeSyncPlayer {
 
   @override
   Future<void> selectSubtitleTrack(SubtitleTrack track) async {}
+}
+
+/// One completed download per key in [keys]; records what was asked.
+class _Downloads extends ChangeNotifier implements DownloadProvider {
+  _Downloads(this.keys);
+
+  final Set<String> keys;
+  final asked = <String>[];
+
+  @override
+  bool isDownloaded(String globalKey) => keys.contains(globalKey);
+
+  @override
+  Future<DownloadedMediaItem?> getCompletedDownload(String globalKey) async {
+    asked.add(globalKey);
+    if (!keys.contains(globalKey)) return null;
+    final separator = globalKey.indexOf(':');
+    return DownloadedMediaItem(
+      id: 1,
+      serverId: globalKey.substring(0, separator),
+      ratingKey: globalKey.substring(separator + 1),
+      globalKey: globalKey,
+      type: 'episode',
+      status: DownloadStatus.completed.index,
+      progress: 100,
+      downloadedBytes: 0,
+      videoFilePath: '/downloads/$globalKey.mkv',
+      retryCount: 0,
+      mediaIndex: 0,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

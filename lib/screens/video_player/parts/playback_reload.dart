@@ -30,12 +30,17 @@ Future<bool> deferTranscodeSubtitleSelection({
 /// Whether a reload's [next] source keeps the outgoing one's subtitle stream
 /// ids, so a carried selection may match by identity. The same version is
 /// not enough when the item is stacked across several files: each file has
-/// streams of its own.
-bool _sameSubtitleSource({
+/// streams of its own. Part and source ids are per server, so a source on
+/// another server never matches, whatever its ids.
+@visibleForTesting
+bool sameSubtitleSource({
+  required String? previousServerId,
   required String? previousMediaSourceId,
   required int? previousPartId,
+  required String? nextServerId,
   required MediaSourceInfo next,
 }) {
+  if (previousServerId != nextServerId) return false;
   if (previousPartId != null && previousPartId == next.partId) return true;
   final samePart = previousPartId == null || next.partId == null;
   return samePart && previousMediaSourceId != null && previousMediaSourceId == next.mediaSourceId;
@@ -617,9 +622,11 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
           preferredSecondarySubtitleTrack: currentSecondarySubtitleTrack,
           preserveSubtitleSourceIdentity:
               result.mediaInfo != null &&
-              _sameSubtitleSource(
+              sameSubtitleSource(
+                previousServerId: previousMetadata.serverId,
                 previousMediaSourceId: previousMediaSourceId,
                 previousPartId: previousPartId,
+                nextServerId: metadata.serverId,
                 next: result.mediaInfo!,
               ),
         );

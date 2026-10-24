@@ -96,6 +96,7 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
         !_showStillWatchingPrompt &&
         !_episode.completionLatch.triggered) {
       _episode.completionLatch.latch();
+      _refreshCopiesOfNextNearEnd();
 
       // The server ended this item's session (a Plex admin stop) and nobody
       // has touched playback since: the buffered item was allowed to finish,

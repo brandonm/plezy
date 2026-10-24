@@ -30,6 +30,11 @@ class EpisodeSessionState {
   /// prefetched into the API cache.
   String? primedNextGlobalKey;
 
+  /// globalKey of the next episode whose copy lookup was re-issued near the
+  /// end of the current item. Keyed by the next episode, so each item gets
+  /// one refresh: consecutive items have different nexts.
+  String? nearEndCopyLookupKey;
+
   bool isResolvingCompletionAdjacency = false;
   bool isLoadingNext = false;
   bool isLoadingPrevious = false;

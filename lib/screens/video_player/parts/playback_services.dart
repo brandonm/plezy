@@ -285,6 +285,7 @@ extension _VideoPlayerPlaybackServiceMethods on VideoPlayerScreenState {
         _eofRecovery.onPositionAdvanced(position.inMilliseconds);
 
         final duration = activePlayer.state.duration;
+        _refreshCopiesOfNextForPosition(position, duration);
         _episode.completionLatch.classifyPosition(
           positionMs: position.inMilliseconds,
           durationMs: duration.inMilliseconds,

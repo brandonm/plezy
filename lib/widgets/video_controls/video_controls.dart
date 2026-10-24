@@ -618,6 +618,10 @@ class PlexVideoControls extends StatefulWidget {
   /// completion flow so the auto-play-next setting is honored.
   final void Function({required bool skipAutoPlayCountdown})? onReachedEnd;
 
+  /// Called when the playhead enters a credits marker the viewer has not
+  /// turned off, so the screen can prepare the next item.
+  final VoidCallback? onCreditsMarker;
+
   /// Whether the user can control playback (false in host-only mode for non-host).
   final bool canControl;
 
@@ -740,6 +744,7 @@ class PlexVideoControls extends StatefulWidget {
     this.onSeekCompleted,
     this.onBack,
     this.onReachedEnd,
+    this.onCreditsMarker,
     this.canControl = true,
     required this.canNavigateMediaItems,
     this.hasFirstFrame,

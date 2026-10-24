@@ -151,9 +151,12 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
   /// [MediaReloadOutcome.rejected]: no in-place reload ran.
   Future<MediaReloadOutcome> _navigateToEpisode(MediaItem anchor) async {
     _episode.lastReloadFailureReason = null;
-    final copy = _bestCopyOf(anchor);
+    final copy = await _bestCopyOf(anchor);
+    if (!mounted) return MediaReloadOutcome.superseded;
     final episodeMetadata = copy?.item ?? anchor;
-    final queueAnchor = episodeMetadata.globalKey == anchor.globalKey ? null : anchor;
+    // By identity: the queue matches its own entry objects, and the chosen
+    // item may be the entry itself re-stamped with another copy's progress.
+    final queueAnchor = identical(episodeMetadata, anchor) ? null : anchor;
     final currentPlayer = player;
     if (currentPlayer == null) {
       if (mounted) unawaited(_replaceScreenWithPlayer(episodeMetadata, queueAnchor: queueAnchor));
@@ -177,6 +180,10 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
       // plays.
       final copyInPlay = queueAnchor != null || _queueAnchor != null;
       final changesServer = copyInPlay && episodeMetadata.serverId != _currentMetadata.serverId;
+      final pickSignature = copy?.pickSignature;
+      final copyVersionIndex = pickSignature == null
+          ? 0
+          : MediaVersion.findMatchingIndex(episodeMetadata.mediaVersions ?? const [], {pickSignature}) ?? 0;
       // Users who curate per-episode selections server-side (e.g. via Plex Auto
       // Languages) opt out of carrying tracks across episodes entirely: with no
       // preferences, both audio and subtitles start at the server-selected
@@ -207,9 +214,9 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
       return await _reloadMediaInPlace(
         metadata: episodeMetadata,
         queueAnchor: queueAnchor,
-        selectedMediaIndex: changesServer ? 0 : _effectiveSelectedMediaIndex,
+        selectedMediaIndex: changesServer ? copyVersionIndex : _effectiveSelectedMediaIndex,
         selectedMediaSourceId: null,
-        preferredVersionSignature: changesServer ? copy?.pickSignature : currentVersionSignature,
+        preferredVersionSignature: changesServer ? pickSignature : currentVersionSignature,
         qualityPreset: _selectedQualityPreset,
         // Stream ids are per-part: the previous episode's audio id is
         // meaningless on the new item, so let preferences pick the track.

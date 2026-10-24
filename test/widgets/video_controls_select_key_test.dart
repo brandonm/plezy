@@ -159,6 +159,7 @@ void main() {
     TargetPlatform platform = TargetPlatform.windows,
     bool canControl = true,
     bool playbackPromptOpen = false,
+    VoidCallback? onCreditsMarker,
   }) async {
     await tester.pumpWidget(shell(const SizedBox.expand(), platform: platform));
     await tester.pump();
@@ -178,6 +179,7 @@ void main() {
           canNavigateMediaItems: false,
           canControl: canControl,
           playbackPromptOpen: playbackPromptOpen,
+          onCreditsMarker: onCreditsMarker,
           onPlayPauseRequested: (_) async => toggles++,
         ),
       ),
@@ -402,6 +404,32 @@ void main() {
   // only key on a remote that means "no thanks" also ended the episode.
   // Desktop, not TV, because Apple TV runs Back on key-down: the normal
   // down-consume/up-act path is where the claim has to hold.
+  // The screen re-asks for the next episode's copies when credits start
+  // (copy priority); only a credits marker announces it.
+  testWidgets('entering a credits marker tells the screen, once; an intro does not', (tester) async {
+    var credits = 0;
+    await pumpPlayer(
+      tester,
+      markers: [
+        MediaMarker(id: 1, type: 'intro', startTimeOffset: 10000, endTimeOffset: 45000),
+        MediaMarker(id: 2, type: 'credits', startTimeOffset: 2400000, endTimeOffset: 2700000),
+      ],
+      onCreditsMarker: () => credits++,
+    );
+    player.emitPosition(const Duration(seconds: 15));
+    await tester.pumpAndSettle();
+    expect(credits, 0, reason: 'an intro is not the end');
+
+    player.emitPosition(const Duration(minutes: 41));
+    await tester.pumpAndSettle();
+    player.emitPosition(const Duration(minutes: 42));
+    await tester.pumpAndSettle();
+    expect(credits, 1);
+
+    chrome.cancelAutoHide();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   group('declining a skip prompt', () {
     final introMarker = MediaMarker(id: 1, type: 'intro', startTimeOffset: 10000, endTimeOffset: 45000);
 
