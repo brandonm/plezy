@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
+import '../../focus/dpad_navigator.dart';
 import '../../focus/dpad_reorder_mixin.dart';
 import '../../focus/input_mode_tracker.dart';
 import '../../i18n/strings.g.dart';
@@ -9,6 +12,7 @@ import '../../media/media_kind.dart';
 import '../../media/media_library.dart';
 import '../../providers/copy_priority_provider.dart';
 import '../../providers/libraries_provider.dart';
+import '../../utils/app_logger.dart';
 import '../../utils/content_utils.dart';
 import '../../widgets/app_icon.dart';
 
@@ -20,9 +24,33 @@ bool _isVideoLibrary(MediaLibrary library) => switch (library.kind) {
   _ => false,
 };
 
+/// [ranked] with the keys of [stored] the screen doesn't show (a server offline
+/// or not loaded yet) kept in place: each right after the stored key before it
+/// that is still ranked, or at the front when none is. Only the removal of
+/// their server deletes them.
+List<String> _keepingHidden(List<String> ranked, Set<String> shown, List<String> stored) {
+  final stillRanked = ranked.toSet();
+  final front = <String>[];
+  final after = <String, List<String>>{};
+  String? anchor;
+  for (final key in stored) {
+    if (stillRanked.contains(key)) {
+      anchor = key;
+    } else if (!shown.contains(key)) {
+      (anchor == null ? front : after.putIfAbsent(anchor, () => [])).add(key);
+    }
+  }
+  return [
+    ...front,
+    for (final key in ranked) ...[key, ...?after[key]],
+  ];
+}
+
 /// Settings → Playback → Copy priority: ranks libraries across servers so Play
 /// starts the best-ranked copy of a title. Libraries the user has not ranked
-/// sit below a divider and are ordered by resolution at play time.
+/// sit below a divider and are ordered by resolution at play time. The
+/// divider shows even when every library is ranked, at the end, so a row can
+/// be moved below it.
 class CopyPriorityScreen extends StatefulWidget {
   const CopyPriorityScreen({super.key});
 
@@ -47,6 +75,11 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
   /// move mode begins so a crossing of the divider can be told from a move
   /// within one part.
   bool? _moveStartedRanked;
+
+  /// Whether the row being moved, last of all and ranked when the move began,
+  /// was carried down across the divider at the end. No row sits below it to
+  /// swap with, so the crossing is a step of its own.
+  bool _crossedEndDivider = false;
 
   final FocusNode _listFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -84,8 +117,8 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
   }
 
   /// Rebuilds the rows from the providers: only libraries that exist now are
-  /// shown, so stored keys for removed libraries stay out of the list and fall
-  /// out of the stored ranking the next time it is saved.
+  /// shown. Stored keys for the others stay out of the list, and stay stored
+  /// when it is saved ([_keepingHidden]).
   void _syncFromProviders({bool notify = true}) {
     if (!mounted || movingIndex != null) return;
     final present = {for (final l in _libraries.libraries.where(_isVideoLibrary)) l.globalKey: l};
@@ -115,18 +148,42 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
     final startedRanked = _moveStartedRanked;
     if (moving == null || startedRanked == null) return _rankedCount;
     if (!startedRanked && moving < _rankedCount) return _rankedCount + 1;
-    if (startedRanked && moving >= _rankedCount) return _rankedCount - 1;
+    if (startedRanked && (moving >= _rankedCount || _crossedEndDivider)) return _rankedCount - 1;
     return _rankedCount;
   }
 
   void _save(List<MediaLibrary> items, int rankedCount) {
     _items = items;
     _rankedCount = rankedCount;
-    _priority.setPriority([for (final l in items.take(rankedCount)) l.globalKey]);
+    final ranked = [for (final l in items.take(rankedCount)) l.globalKey];
+    final shown = {for (final l in items) l.globalKey};
+    unawaited(
+      _priority.setPriority(_keepingHidden(ranked, shown, _priority.priority)).catchError((Object e, StackTrace st) {
+        appLogger.w('Could not save the copy priority', error: e, stackTrace: st);
+      }),
+    );
   }
 
   @override
   void onReorderMoveConfirmed() => _save(_items, _effectiveRankedCount);
+
+  /// The last row crosses the divider at the end in place, DOWN to unrank it
+  /// and UP to rank it again; every other key goes to [handleReorderKeyEvent].
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    final moving = movingIndex;
+    if (moving != null && moving == _items.length - 1 && event.isActionable) {
+      final key = event.logicalKey;
+      if (key.isDownKey && moving < _effectiveRankedCount) {
+        setState(() => _crossedEndDivider = true);
+        return KeyEventResult.handled;
+      }
+      if (key.isUpKey && _crossedEndDivider) {
+        setState(() => _crossedEndDivider = false);
+        return KeyEventResult.handled;
+      }
+    }
+    return handleReorderKeyEvent(node, event);
+  }
 
   @override
   void onReorderColumnActivated(int column, int index) {}
@@ -135,15 +192,13 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
   /// the divider in it; dropping a row on the other side of the divider ranks
   /// or unranks it.
   void _onDragReorder(int oldIndex, int newIndex) {
-    final display = <Object>[..._items.take(_rankedCount), if (_hasDivider) _divider, ..._items.skip(_rankedCount)];
+    final display = <Object>[..._items.take(_rankedCount), _divider, ..._items.skip(_rankedCount)];
     final moved = display.removeAt(oldIndex);
     display.insert(newIndex, moved);
     final dividerAt = display.indexOf(_divider);
     final items = display.whereType<MediaLibrary>().toList();
-    setState(() => _save(items, dividerAt < 0 ? _rankedCount : dividerAt));
+    setState(() => _save(items, dividerAt));
   }
-
-  bool get _hasDivider => _rankedCount < _items.length;
 
   @override
   Widget build(BuildContext context) {
@@ -151,19 +206,19 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
     // before any swap, so its index is still the starting one.
     if (movingIndex == null) {
       _moveStartedRanked = null;
+      _crossedEndDivider = false;
     } else {
       _moveStartedRanked ??= movingIndex! < _rankedCount;
     }
 
     final count = _effectiveRankedCount;
     final isKeyboardMode = InputModeTracker.isKeyboardMode(context);
-    final hasDivider = count < _items.length;
     final rows = <Widget>[];
     for (var i = 0; i < _items.length; i++) {
-      if (hasDivider && i == count) rows.add(_buildDivider());
       final isFocused = isKeyboardMode && i == focusedIndex;
       rows.add(_buildRow(_items[i], i, count, isFocused: isFocused, isMoving: i == movingIndex));
     }
+    if (rows.isNotEmpty) rows.insert(count, _buildDivider());
 
     return PopScope(
       // On Android TV the back key is handled by the reorder handler; letting
@@ -180,7 +235,7 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
           focusNode: _listFocusNode,
           descendantsAreFocusable: false,
           autofocus: true,
-          onKeyEvent: handleReorderKeyEvent,
+          onKeyEvent: _onKeyEvent,
           child: ReorderableListView(
             scrollController: _scrollController,
             onReorderItem: _onDragReorder,
@@ -218,7 +273,7 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
     required bool isMoving,
   }) {
     final scheme = Theme.of(context).colorScheme;
-    final displayIndex = index >= rankedCount && rankedCount < _items.length ? index + 1 : index;
+    final displayIndex = index >= rankedCount ? index + 1 : index;
     return ListTile(
       key: ValueKey(library.globalKey),
       tileColor: isMoving
