@@ -161,6 +161,8 @@ MediaItem _item(
   int? index,
   String serverId = 'nas',
   List<MediaVersion>? versions,
+  String? libraryId,
+  String? libraryTitle,
 }) => testMediaItem(
   id: id,
   kind: kind,
@@ -169,6 +171,8 @@ MediaItem _item(
   parentIndex: parentIndex,
   index: index,
   serverId: serverId,
+  libraryId: libraryId,
+  libraryTitle: libraryTitle,
   mediaVersions: versions ?? (kind == MediaKind.movie || kind == MediaKind.episode ? _versions : null),
 );
 
@@ -443,6 +447,130 @@ void main() {
       );
 
       expect((await library.findTitleCopies(_episodeQuery)).single, same(full));
+    });
+  });
+
+  group('show-level lookup', () {
+    test('findShowCopies returns shows, not episodes', () async {
+      final library = _Library(
+        'nas',
+        byIds: {
+          MediaKind.show: [_item('show', kind: MediaKind.show, title: 'Severance', year: 2022)],
+        },
+        children: {
+          'show': [_episode('s2e3', season: 2, episode: 3)],
+        },
+      );
+
+      final shows = await library.findShowCopies(_episodeQuery);
+
+      expect(_ids(shows), ['show']);
+      expect(shows.single.kind, MediaKind.show);
+      expect(library.childrenOf, isEmpty);
+      expect(library.idLookups.single.ids.toJson(), {'tvdb': 371980});
+    });
+
+    test('episodesOf is the public episode lookup of a show', () async {
+      final show = _item('show', kind: MediaKind.show, title: 'Severance');
+      final library = _Library(
+        'nas',
+        children: {
+          'show': [_episode('s2e3', season: 2, episode: 3), _episode('s2e4', season: 2, episode: 4)],
+        },
+      );
+
+      expect(_ids(await library.episodesOf(show, season: 2, episode: 3)), ['s2e3']);
+    });
+
+    test('enrichment keeps a library stamp the fetched item lacks', () async {
+      final stamped = _item('m1', libraryId: 'lib4k', libraryTitle: 'Movies 4K', versions: const []);
+      final fetched = _item('m1');
+      final library = _Library(
+        'nas',
+        byIds: {
+          MediaKind.movie: [stamped],
+        },
+        full: {'m1': fetched},
+      );
+
+      final copies = await library.findTitleCopies(_movieQuery);
+
+      expect(library.fetched, ['m1']);
+      expect(copies.single.libraryId, 'lib4k');
+      expect(copies.single.libraryTitle, 'Movies 4K');
+      expect(copies.single.mediaVersions, isNotEmpty);
+    });
+  });
+
+  group('findShowCopiesAcrossServers', () {
+    late AppDatabase db;
+    late MultiServerManager manager;
+    late DataAggregationService service;
+
+    setUp(() {
+      resetSharedPreferencesForTest();
+      db = AppDatabase.forTesting(NativeDatabase.memory());
+      PlexApiCache.initialize(db);
+      JellyfinApiCache.initialize(db);
+      manager = MultiServerManager();
+      service = DataAggregationService(manager);
+    });
+
+    tearDown(() async {
+      manager.dispose();
+      await db.close();
+    });
+
+    test('reports per-server accounting and returns shows from every server that has one', () async {
+      manager
+        ..debugRegisterClientForTesting(
+          _Library(
+            'a',
+            byIds: {
+              MediaKind.show: [_item('show', kind: MediaKind.show, serverId: 'a')],
+            },
+          ),
+        )
+        ..debugRegisterClientForTesting(
+          _Library(
+            'b',
+            byIds: {
+              MediaKind.show: [_item('show', kind: MediaKind.show, serverId: 'b')],
+            },
+          ),
+        )
+        ..debugRegisterClientForTesting(_Library('empty', byIds: {MediaKind.show: const []}))
+        ..debugRegisterClientForTesting(
+          _Library(
+            'failed',
+            error: MediaServerHttpException(type: MediaServerHttpErrorType.connectionError, message: 'refused'),
+          ),
+        )
+        ..debugRegisterClientForTesting(
+          _Library(
+            'cancelled',
+            error: MediaServerHttpException(type: MediaServerHttpErrorType.cancelled, message: 'closing'),
+          ),
+        );
+
+      final result = await service.findShowCopiesAcrossServers(_episodeQuery);
+
+      expect({for (final item in result.items) '${item.serverId}:${item.id}'}, {'a:show', 'b:show'});
+      expect(result.succeededServerIds, {'a', 'b', 'empty'});
+      expect(result.failedServerIds, {'failed'});
+      expect(result.cancelledServerIds, {'cancelled'});
+      expect(result.unqueriedServerIds, isEmpty);
+    });
+
+    test('an already aborted wave asks no server', () async {
+      final library = _Library('a');
+      manager.debugRegisterClientForTesting(library);
+
+      await expectLater(
+        service.findShowCopiesAcrossServers(_episodeQuery, abort: AbortController()..abort()),
+        throwsA(isA<MediaServerHttpException>()),
+      );
+      expect(library.idLookups, isEmpty);
     });
   });
 

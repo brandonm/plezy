@@ -1,7 +1,9 @@
 import '../utils/app_logger.dart';
 import '../utils/external_ids.dart';
 import '../utils/media_server_http_client.dart';
+import 'ids.dart';
 import 'media_item.dart';
+import 'media_item_merge.dart';
 import 'media_kind.dart';
 import 'media_server_client.dart';
 
@@ -73,23 +75,28 @@ extension TitleCopiesLookup on MediaServerClient {
         abort: abort,
       );
     } else {
-      final shows = await _titleItems(
-        kind: MediaKind.show,
-        title: query.showTitle ?? '',
-        year: query.showYear,
-        ids: query.showIds,
-        plexGuid: query.showPlexGuid,
-        abort: abort,
-      );
+      final shows = await findShowCopies(query, abort: abort);
       final episodes = <MediaItem>[];
       for (final show in shows) {
         abort?.throwIfAborted();
-        episodes.addAll(await _episodesOf(show, season: query.season!, episode: query.episode!, abort: abort));
+        episodes.addAll(await episodesOf(show, season: query.season!, episode: query.episode!, abort: abort));
       }
       found = query.ids.hasAny ? await _withoutContradictions(episodes, query.ids, abort: abort) : episodes;
     }
     return _withVersions(found, abort: abort);
   }
+
+  /// The shows of an episode [query]'s show half on this server, as
+  /// [findTitleCopies] finds them: by the show's IDs, else its title. The rows
+  /// are shows, not episodes, and come without enrichment.
+  Future<List<MediaItem>> findShowCopies(TitleQuery query, {AbortController? abort}) => _titleItems(
+    kind: MediaKind.show,
+    title: query.showTitle ?? '',
+    year: query.showYear,
+    ids: query.showIds,
+    plexGuid: query.showPlexGuid,
+    abort: abort,
+  );
 
   Future<List<MediaItem>> _titleItems({
     required MediaKind kind,
@@ -142,7 +149,7 @@ extension TitleCopiesLookup on MediaServerClient {
 
   /// The episodes of [show] numbered [season]x[episode]. A Plex show whose
   /// seasons are hidden lists its episodes directly.
-  Future<List<MediaItem>> _episodesOf(
+  Future<List<MediaItem>> episodesOf(
     MediaItem show, {
     required int season,
     required int episode,
@@ -187,7 +194,8 @@ extension TitleCopiesLookup on MediaServerClient {
       }
       abort?.throwIfAborted();
       try {
-        result.add(await fetchItem(item.id) ?? item);
+        final fetched = await fetchItem(item.id);
+        result.add(fetched == null ? item : _keepingContext(fetched, item, serverId));
       } catch (error, stackTrace) {
         // The row itself still names the copy; its length may be on the row.
         appLogger.w('Could not read versions of ${item.id}', error: error, stackTrace: stackTrace);
@@ -196,6 +204,18 @@ extension TitleCopiesLookup on MediaServerClient {
     }
     return result;
   }
+}
+
+/// [fetched] with the context [row] carried and it lacks, such as the library
+/// stamp a Jellyfin item DTO never has. [fetched] itself when nothing differs.
+MediaItem _keepingContext(MediaItem fetched, MediaItem row, ServerId fallbackServerId) {
+  final merged = mergeFetchedMediaItem(fetched: fetched, fallbackServerId: fallbackServerId, existing: row);
+  final same =
+      merged.libraryId == fetched.libraryId &&
+      merged.libraryTitle == fetched.libraryTitle &&
+      merged.serverId == fetched.serverId &&
+      merged.serverName == fetched.serverName;
+  return same ? fetched : merged;
 }
 
 bool _yearsAgree(int? wanted, int? found) => wanted == null || found == null || (wanted - found).abs() <= 1;
