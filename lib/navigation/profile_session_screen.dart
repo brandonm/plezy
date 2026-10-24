@@ -16,6 +16,7 @@ import '../providers/catalog_sources_provider.dart';
 import '../providers/companion_remote_provider.dart';
 import '../providers/discover_provider.dart';
 import '../providers/explore_provider.dart';
+import '../providers/copy_priority_provider.dart';
 import '../providers/hidden_libraries_provider.dart';
 import '../providers/libraries_provider.dart';
 import '../providers/multi_server_provider.dart';
@@ -220,6 +221,11 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
               ChangeNotifierProvider(
                 create: (context) =>
                     HiddenLibrariesProvider(storageService: context.read<StorageService>(), profileId: activeId),
+                lazy: true,
+              ),
+              ChangeNotifierProvider(
+                create: (context) =>
+                    CopyPriorityProvider(storageService: context.read<StorageService>(), profileId: activeId),
                 lazy: true,
               ),
               ChangeNotifierProvider(

@@ -19,6 +19,7 @@ class StorageService extends BaseSharedPreferencesService {
   static const String _keyLibraryOrder = 'library_order';
   static const String _keyCurrentUserUUID = 'current_user_uuid';
   static const String _keyHiddenLibraries = 'hidden_libraries';
+  static const String _keyCopyPriority = 'copy_priority';
   static const String _keyServersList = 'servers_list';
   static const String _keyServerOrder = 'server_order';
   static const String _keyActiveProfileId = 'active_app_profile_id';
@@ -34,7 +35,12 @@ class StorageService extends BaseSharedPreferencesService {
   // Key groups for bulk clearing
   static const List<String> _credentialKeys = [_keyPlexToken, _keyClientId, _keyCurrentUserUUID];
 
-  static const List<String> _libraryPreferenceKeys = [_keyLibraryFilters, _keyLibraryOrder, _keyHiddenLibraries];
+  static const List<String> _libraryPreferenceKeys = [
+    _keyLibraryFilters,
+    _keyLibraryOrder,
+    _keyHiddenLibraries,
+    _keyCopyPriority,
+  ];
 
   StorageService._();
 
@@ -407,6 +413,7 @@ class StorageService extends BaseSharedPreferencesService {
       _clearLibraryPreferencesForServerPrefix('', serverId),
       _filterServerEntriesFromAllStringListKeys(_keyLibraryOrder, serverId),
       _filterServerEntriesFromAllStringListKeys(_keyHiddenLibraries, serverId),
+      _filterServerEntriesFromAllStringListKeys(_keyCopyPriority, serverId),
       _clearServerSelectedLibraryKeysEverywhere(serverId),
       _clearServerPerLibraryKeysEverywhere(_prefixLibrarySort, serverId),
       _clearServerPerLibraryKeysEverywhere(_prefixLibraryFilters, serverId),
@@ -419,6 +426,7 @@ class StorageService extends BaseSharedPreferencesService {
     await Future.wait([
       _filterServerEntriesFromStringList('$prefix$_keyLibraryOrder', serverId),
       _filterServerEntriesFromStringList('$prefix$_keyHiddenLibraries', serverId),
+      _filterServerEntriesFromStringList('$prefix$_keyCopyPriority', serverId),
       _clearSelectedLibraryForServer('$prefix$_keySelectedLibraryKey', serverId),
       _clearKeysWithPrefixForServer('$prefix$_prefixLibrarySort', serverId),
       _clearKeysWithPrefixForServer('$prefix$_prefixLibraryFilters', serverId),
@@ -426,6 +434,14 @@ class StorageService extends BaseSharedPreferencesService {
       _clearKeysWithPrefixForServer('$prefix$_prefixLibraryTab', serverId),
     ]);
   }
+
+  // Copy priority (JSON list of `serverId:libraryId` keys, best first). Per
+  // device and per profile; deliberately not part of settings export.
+  Future<void> saveCopyPriorityForProfile(String profileId, List<String> libraryKeys) =>
+      _setStringList('${_userPrefixForProfileId(profileId)}$_keyCopyPriority', libraryKeys);
+
+  List<String> getCopyPriorityForProfile(String profileId) =>
+      _getStringList('${_userPrefixForProfileId(profileId)}$_keyCopyPriority') ?? const [];
 
   // Library Order (stored as JSON list of library keys)
   Future<void> saveLibraryOrder(List<String> libraryKeys, {String? profileId}) async {
