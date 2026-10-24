@@ -170,12 +170,23 @@ void main() {
       expect(furthestResumeOffsetMs(target, copies), 700_000);
     });
 
-    test('watched copy with a residual offset is ignored', () {
+    test('watched copy with a residual offset is ignored while an unwatched copy has progress', () {
       final copies = [
         _movie('a', durationMs: 1_000_000, viewOffsetMs: 200_000),
         _movie('b', durationMs: 1_000_000, viewOffsetMs: 600_000, viewCount: 1),
       ];
       expect(furthestResumeOffsetMs(target, copies), 200_000);
+    });
+
+    test('a rewatch in progress lends its offset when no unwatched copy has progress', () {
+      final copies = [
+        _movie('t', durationMs: 1_000_000),
+        _movie('a', durationMs: 1_000_000, viewOffsetMs: 300_000, viewCount: 1),
+        _movie('b', durationMs: 1_000_000, viewOffsetMs: 400_000, viewCount: 2),
+        // Watched too, but its length is more than 5% off.
+        _movie('c', durationMs: 1_100_000, viewOffsetMs: 900_000, viewCount: 1),
+      ];
+      expect(furthestResumeOffsetMs(target, copies), 400_000);
     });
 
     test('copy whose duration differs by more than 5% is ignored', () {

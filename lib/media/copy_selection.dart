@@ -46,19 +46,25 @@ bool acceptEpisodeCopy({
 /// The largest in-progress `viewOffsetMs` among [copies] whose length is within
 /// 5% of [target]'s, or null when none qualifies.
 ///
-/// `hasActiveProgress` ignores watched status, so a watched copy with a
-/// leftover offset is excluded here. Copies of unknown length are ignored.
+/// Unwatched copies with progress come first. Only when none has any does a
+/// watched copy's progress count: watched but resumable, a rewatch under way.
+/// Copies of unknown length are ignored.
 int? furthestResumeOffsetMs(MediaItem target, Iterable<MediaItem> copies) {
   final targetDuration = target.durationMs;
   if (targetDuration == null) return null;
-  int? best;
+  int? unwatched;
+  int? rewatch;
   for (final copy in copies) {
-    if (copy.isWatched || !copy.hasActiveProgress) continue;
+    if (!copy.hasActiveProgress) continue;
     if ((copy.durationMs! - targetDuration).abs() * 20 > targetDuration) continue;
     final offset = copy.viewOffsetMs!;
-    if (best == null || offset > best) best = offset;
+    if (!copy.isWatched) {
+      if (unwatched == null || offset > unwatched) unwatched = offset;
+    } else if (rewatch == null || offset > rewatch) {
+      rewatch = offset;
+    }
   }
-  return best;
+  return unwatched ?? rewatch;
 }
 
 /// The key a remembered pick is filed under for [copy]: the show copy's key
