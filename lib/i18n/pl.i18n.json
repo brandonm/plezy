@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Niezaznaczone kodeki są transkodowane przez serwer",
     "videoCodecsAlwaysAccepted": "Zawsze akceptowany",
     "musicQualityTitle": "Jakość muzyki",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Styl napisów",
     "subtitleStylingDescription": "Dostosuj wygląd napisów",
     "smallSkipDuration": "Krótki skok",
@@ -767,7 +770,15 @@
     "mediaFailedToDelete": "Nie udało się usunąć elementu multimedialnego",
     "rate": "Oceń",
     "playFromBeginning": "Odtwórz od początku",
-    "playVersion": "Odtwórz wersję..."
+    "playVersion": "Odtwórz wersję...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Oceń",
@@ -1202,6 +1213,7 @@
     "recentlyPlayedIn": "Ostatnio odtwarzane w ${library}",
     "mostPlayedIn": "Najczęściej odtwarzane w ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Opis",
     "cast": "Obsada",
     "extras": "Zwiastuny i dodatki",

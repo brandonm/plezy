@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Codecs uden flueben transkodes af serveren",
     "videoCodecsAlwaysAccepted": "Accepteres altid",
     "musicQualityTitle": "Musikkvalitet",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Undertekststil",
     "subtitleStylingDescription": "Tilpas underteksters udseende",
     "smallSkipDuration": "Kort spring",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Mediet kunne ikke slettes",
     "rate": "Bedøm",
     "playFromBeginning": "Afspil fra begyndelsen",
-    "playVersion": "Afspil version..."
+    "playVersion": "Afspil version...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Bedøm",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Senest afspillet i ${library}",
     "mostPlayedIn": "Mest afspillet i ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Oversigt",
     "cast": "Rollebesætning",
     "extras": "Trailere og ekstramateriale",

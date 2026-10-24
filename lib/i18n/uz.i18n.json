@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Belgilanmagan kodeklarni server qayta kodlaydi",
     "videoCodecsAlwaysAccepted": "Har doim qabul qilinadi",
     "musicQualityTitle": "Musiqa sifati",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Subtitr sozlamalari",
     "subtitleStylingDescription": "Subtitrlar koʻrinishini moslashtiring",
     "smallSkipDuration": "Kichik oʻtkazish vaqti",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Media elementini oʻchirib boʻlmadi",
     "rate": "Baho berish",
     "playFromBeginning": "Boshidan ijro etish",
-    "playVersion": "Versiyani ijro etish..."
+    "playVersion": "Versiyani ijro etish...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Baho berish",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "${library} ichida yaqinda eshitilganlar",
     "mostPlayedIn": "${library} ichida eng koʻp eshitilganlar",
     "playEpisode": "M${season}Q${episode}",
+    "playEpisodeOn": "",
     "overview": "Tavsif",
     "cast": "Aktyorlar",
     "extras": "Treylerlar va qoʻshimchalar",

@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Кодеки без отметки транскодирует сервер",
     "videoCodecsAlwaysAccepted": "Принимается всегда",
     "musicQualityTitle": "Качество музыки",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Стиль субтитров",
     "subtitleStylingDescription": "Настроить внешний вид субтитров",
     "smallSkipDuration": "Малая перемотка",
@@ -767,7 +770,15 @@
     "mediaFailedToDelete": "Не удалось удалить медиаэлемент",
     "rate": "Оценить",
     "playFromBeginning": "Воспроизвести сначала",
-    "playVersion": "Воспроизвести версию..."
+    "playVersion": "Воспроизвести версию...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Оценить",
@@ -1202,6 +1213,7 @@
     "recentlyPlayedIn": "Недавно прослушанное в ${library}",
     "mostPlayedIn": "Часто прослушиваемое в ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Обзор",
     "cast": "В ролях",
     "extras": "Трейлеры и доп. материалы",

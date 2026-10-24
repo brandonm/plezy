@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Kodekar utan bock transkodas av servern",
     "videoCodecsAlwaysAccepted": "Accepteras alltid",
     "musicQualityTitle": "Musikkvalitet",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Utseende för undertexter",
     "subtitleStylingDescription": "Anpassa undertexternas utseende",
     "smallSkipDuration": "Litet hoppsteg",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Det gick inte att ta bort medieobjektet",
     "rate": "Betygsätt",
     "playFromBeginning": "Spela från början",
-    "playVersion": "Spela version..."
+    "playVersion": "Spela version...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Betygsätt",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Nyligen spelade i ${library}",
     "mostPlayedIn": "Mest spelade i ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Översikt",
     "cast": "Rollbesättning",
     "extras": "Trailrar och extramaterial",

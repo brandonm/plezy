@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Kodeker uten hake transkodes av serveren",
     "videoCodecsAlwaysAccepted": "Godtas alltid",
     "musicQualityTitle": "Musikkvalitet",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Undertekststil",
     "subtitleStylingDescription": "Tilpass utseendet på undertekster",
     "smallSkipDuration": "Kort hoppvarighet",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Kunne ikke slette medieelement",
     "rate": "Vurder",
     "playFromBeginning": "Spill fra begynnelsen",
-    "playVersion": "Spill av versjon..."
+    "playVersion": "Spill av versjon...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Vurder",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Nylig spilt i ${library}",
     "mostPlayedIn": "Mest spilt i ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Oversikt",
     "cast": "Skuespillere",
     "extras": "Trailere og ekstramateriale",

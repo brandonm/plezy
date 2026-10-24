@@ -275,6 +275,9 @@
     "videoCodecsDescription": "El servidor transcodifica los códecs no marcados",
     "videoCodecsAlwaysAccepted": "Siempre aceptado",
     "musicQualityTitle": "Calidad de música",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Estilo de subtítulos",
     "subtitleStylingDescription": "Personalizar la apariencia de los subtítulos",
     "smallSkipDuration": "Salto pequeño",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Error al eliminar el elemento multimedia",
     "rate": "Calificar",
     "playFromBeginning": "Reproducir desde el inicio",
-    "playVersion": "Reproducir versión..."
+    "playVersion": "Reproducir versión...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Calificar",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Reproducido recientemente en ${library}",
     "mostPlayedIn": "Más reproducido en ${library}",
     "playEpisode": "T${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Resumen",
     "cast": "Reparto",
     "extras": "Tráilers y extras",

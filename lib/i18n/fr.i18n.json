@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Le serveur transcode les codecs non cochés",
     "videoCodecsAlwaysAccepted": "Toujours accepté",
     "musicQualityTitle": "Qualité de la musique",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Style des sous-titres",
     "subtitleStylingDescription": "Personnaliser l’apparence des sous-titres",
     "smallSkipDuration": "Durée du saut court",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Échec de la suppression de l'élément média",
     "rate": "Noter",
     "playFromBeginning": "Lire depuis le début",
-    "playVersion": "Lire la version..."
+    "playVersion": "Lire la version...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Noter",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Récemment lus dans ${library}",
     "mostPlayedIn": "Les plus lus dans ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Aperçu",
     "cast": "Distribution",
     "extras": "Bandes-annonces et bonus",

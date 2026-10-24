@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Il server transcodifica i codec non selezionati",
     "videoCodecsAlwaysAccepted": "Sempre accettato",
     "musicQualityTitle": "Qualità musicale",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Stile sottotitoli",
     "subtitleStylingDescription": "Personalizza l'aspetto dei sottotitoli",
     "smallSkipDuration": "Salto breve",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Impossibile eliminare l'elemento multimediale",
     "rate": "Valuta",
     "playFromBeginning": "Riproduci dall'inizio",
-    "playVersion": "Riproduci versione..."
+    "playVersion": "Riproduci versione...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Valuta",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Riprodotti di recente in ${library}",
     "mostPlayedIn": "Più riprodotti in ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Panoramica",
     "cast": "Attori",
     "extras": "Trailer ed extra",

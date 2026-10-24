@@ -275,6 +275,9 @@
     "videoCodecsDescription": "チェックを外したコーデックはサーバーがトランスコードします",
     "videoCodecsAlwaysAccepted": "常に許可",
     "musicQualityTitle": "音楽の音質",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "字幕スタイル",
     "subtitleStylingDescription": "字幕の外観をカスタマイズ",
     "smallSkipDuration": "短いスキップ時間",
@@ -758,7 +761,15 @@
     "mediaFailedToDelete": "メディアアイテムの削除に失敗しました",
     "rate": "評価",
     "playFromBeginning": "最初から再生",
-    "playVersion": "バージョンを選んで再生…"
+    "playVersion": "バージョンを選んで再生…",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "評価",
@@ -1190,6 +1201,7 @@
     "recentlyPlayedIn": "${library}で最近再生したコンテンツ",
     "mostPlayedIn": "${library}で最も再生したコンテンツ",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "あらすじ",
     "cast": "キャスト",
     "extras": "予告編とエクストラ",

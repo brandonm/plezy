@@ -275,6 +275,9 @@
     "videoCodecsDescription": "未勾选的编解码器将由服务器转码",
     "videoCodecsAlwaysAccepted": "始终接受",
     "musicQualityTitle": "音乐音质",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "字幕样式",
     "subtitleStylingDescription": "调整字幕外观",
     "smallSkipDuration": "短跳过时长",
@@ -758,7 +761,15 @@
     "mediaFailedToDelete": "删除媒体项失败",
     "rate": "评分",
     "playFromBeginning": "从头播放",
-    "playVersion": "播放版本…"
+    "playVersion": "播放版本…",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "评分",
@@ -1190,6 +1201,7 @@
     "recentlyPlayedIn": "${library} 中最近播放",
     "mostPlayedIn": "${library} 中最常播放",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "概述",
     "cast": "演员表",
     "extras": "预告片与花絮",

@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Codecs desmarcados são transcodificados pelo servidor",
     "videoCodecsAlwaysAccepted": "Sempre aceito",
     "musicQualityTitle": "Qualidade da música",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Estilo de Legendas",
     "subtitleStylingDescription": "Personalizar aparência das legendas",
     "smallSkipDuration": "Duração do Avanço Curto",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Falha ao excluir item de mídia",
     "rate": "Avaliar",
     "playFromBeginning": "Reproduzir do início",
-    "playVersion": "Reproduzir versão..."
+    "playVersion": "Reproduzir versão...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Avaliar",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Reproduzidos recentemente em ${library}",
     "mostPlayedIn": "Mais reproduzidos em ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Sinopse",
     "cast": "Elenco",
     "extras": "Trailers e extras",

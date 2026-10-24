@@ -275,6 +275,9 @@
     "videoCodecsDescription": "A nem bejelölt kodekeket a szerver átkódolja",
     "videoCodecsAlwaysAccepted": "Mindig elfogadva",
     "musicQualityTitle": "Zene minősége",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Feliratok stílusa",
     "subtitleStylingDescription": "Feliratok megjelenésének testreszabása",
     "smallSkipDuration": "Kis ugrás időtartama",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Nem sikerült a médiaelem törlése",
     "rate": "Értékelés",
     "playFromBeginning": "Lejátszás az elejétől",
-    "playVersion": "Verzió lejátszása..."
+    "playVersion": "Verzió lejátszása...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Értékelés",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Legutóbb lejátszva itt: ${library}",
     "mostPlayedIn": "Legtöbbször lejátszva itt: ${library}",
     "playEpisode": "${season}. évad, ${episode}. epizód",
+    "playEpisodeOn": "",
     "overview": "Áttekintés",
     "cast": "Szereplők",
     "extras": "Előzetesek és extrák",

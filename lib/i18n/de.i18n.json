@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Nicht ausgewählte Codecs transkodiert der Server",
     "videoCodecsAlwaysAccepted": "Immer akzeptiert",
     "musicQualityTitle": "Musikqualität",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Untertitel-Stil",
     "subtitleStylingDescription": "Aussehen von Untertiteln anpassen",
     "smallSkipDuration": "Kleines Sprungintervall",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Medienelement konnte nicht gelöscht werden",
     "rate": "Bewerten",
     "playFromBeginning": "Von Anfang an abspielen",
-    "playVersion": "Version abspielen …"
+    "playVersion": "Version abspielen …",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Bewerten",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Kürzlich gespielt in ${library}",
     "mostPlayedIn": "Am häufigsten gespielt in ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Übersicht",
     "cast": "Besetzung",
     "extras": "Trailer & Extras",

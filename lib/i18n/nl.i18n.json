@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Niet-aangevinkte codecs worden door de server getranscodeerd",
     "videoCodecsAlwaysAccepted": "Altijd geaccepteerd",
     "musicQualityTitle": "Muziekkwaliteit",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Ondertitelopmaak",
     "subtitleStylingDescription": "Pas de weergave van ondertitels aan",
     "smallSkipDuration": "Korte sprong",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Verwijderen van media-item mislukt",
     "rate": "Beoordelen",
     "playFromBeginning": "Afspelen vanaf het begin",
-    "playVersion": "Versie afspelen..."
+    "playVersion": "Versie afspelen...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Beoordelen",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Onlangs afgespeeld in ${library}",
     "mostPlayedIn": "Meest afgespeeld in ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Overzicht",
     "cast": "Acteurs",
     "extras": "Trailers en extra's",

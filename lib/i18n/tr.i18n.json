@@ -275,6 +275,9 @@
     "videoCodecsDescription": "İşaretlenmemiş codec'lerin kodunu sunucu dönüştürür",
     "videoCodecsAlwaysAccepted": "Her zaman kabul edilir",
     "musicQualityTitle": "Müzik Kalitesi",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Altyazı Biçimlendirmesi",
     "subtitleStylingDescription": "Altyazı görünümünü özelleştirin",
     "smallSkipDuration": "Küçük Atlama Süresi",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Medya ögesi silinemedi",
     "rate": "Oyla",
     "playFromBeginning": "Baştan Oynat",
-    "playVersion": "Sürümü Oynat..."
+    "playVersion": "Sürümü Oynat...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Oyla",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "${library} içinde Son Oynatılanlar",
     "mostPlayedIn": "${library} içinde En Çok Oynatılanlar",
     "playEpisode": "S${season}B${episode}",
+    "playEpisodeOn": "",
     "overview": "Genel Bakış",
     "cast": "Oyuncular",
     "extras": "Fragmanlar ve Ekstralar",

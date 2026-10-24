@@ -275,6 +275,9 @@
     "videoCodecsDescription": "未勾選的編解碼器將由伺服器轉碼",
     "videoCodecsAlwaysAccepted": "一律接受",
     "musicQualityTitle": "音樂品質",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "字幕樣式",
     "subtitleStylingDescription": "調整字幕外觀",
     "smallSkipDuration": "短跳過時間",
@@ -758,7 +761,15 @@
     "mediaFailedToDelete": "刪除媒體失敗",
     "rate": "評分",
     "playFromBeginning": "從頭播放",
-    "playVersion": "播放版本…"
+    "playVersion": "播放版本…",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "評分",
@@ -1190,6 +1201,7 @@
     "recentlyPlayedIn": "最近在 ${library} 播放",
     "mostPlayedIn": "在 ${library} 最常播放",
     "playEpisode": "第 ${season} 季 第 ${episode} 集",
+    "playEpisodeOn": "",
     "overview": "概述",
     "cast": "演員陣容",
     "extras": "預告片與花絮",

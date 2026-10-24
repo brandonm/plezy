@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Белгіленбеген кодектерді сервер транскодтайды",
     "videoCodecsAlwaysAccepted": "Әрқашан қабылданады",
     "musicQualityTitle": "Музыка сапасы",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Субтитр баптаулары",
     "subtitleStylingDescription": "Субтитрлердің сыртқы келбетін теңшеу",
     "smallSkipDuration": "Шағын өткізіп жіберу уақыты",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Медиа элементін өшіру мүмкін болмады",
     "rate": "Бағалау",
     "playFromBeginning": "Басынан бастап ойнату",
-    "playVersion": "Нұсқаны ойнату..."
+    "playVersion": "Нұсқаны ойнату...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Бағалау",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "${library} ішінде соңғы ойнатылғандар",
     "mostPlayedIn": "${library} ішінде ең көп ойнатылғандар",
     "playEpisode": "М${season}Б${episode}",
+    "playEpisodeOn": "",
     "overview": "Сипаттамасы",
     "cast": "Актерлер",
     "extras": "Трейлерлер мен қосымшалар",

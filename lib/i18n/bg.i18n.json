@@ -275,6 +275,9 @@
     "videoCodecsDescription": "Сървърът транскодира кодеците без отметка",
     "videoCodecsAlwaysAccepted": "Винаги се приема",
     "musicQualityTitle": "Качество на музиката",
+    "copyPriority": "",
+    "copyPriorityDescription": "",
+    "copyPriorityUnranked": "",
     "subtitleStyling": "Стил на субтитрите",
     "subtitleStylingDescription": "Настройване на вида на субтитрите",
     "smallSkipDuration": "Малко прескачане",
@@ -761,7 +764,15 @@
     "mediaFailedToDelete": "Неуспешно изтриване на елемента",
     "rate": "Оцени",
     "playFromBeginning": "Пусни от началото",
-    "playVersion": "Пусни версия..."
+    "playVersion": "Пусни версия...",
+    "playOn": "",
+    "copyName": "",
+    "copySource": "",
+    "copyVersion": "",
+    "usePriorityOrder": ""
+  },
+  "mediaDetail": {
+    "alsoIn": ""
   },
   "rateSheet": {
     "title": "Оцени",
@@ -1194,6 +1205,7 @@
     "recentlyPlayedIn": "Наскоро възпроизведени в ${library}",
     "mostPlayedIn": "Най-възпроизвеждани в ${library}",
     "playEpisode": "S${season}E${episode}",
+    "playEpisodeOn": "",
     "overview": "Обзор",
     "cast": "Актьори",
     "extras": "Трейлъри и екстри",
