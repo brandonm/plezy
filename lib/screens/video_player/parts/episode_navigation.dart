@@ -114,10 +114,15 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
   /// server's item, so it opens outside the offline library. The player still
   /// plays a download of the room's version. [queueAnchor] is the origin
   /// queue's entry when [metadata] is another library's copy of it.
+  /// [resolveWatchState] and [selectedMediaIndex] are
+  /// [navigateToVideoPlayer]'s: a chosen copy already carries its progress
+  /// and its pick's version.
   Future<void> _replaceScreenWithPlayer(
     MediaItem metadata, {
     MediaItem? queueAnchor,
     WatchCopy? watchTogetherCopy,
+    bool resolveWatchState = true,
+    int? selectedMediaIndex,
   }) async {
     final version = watchTogetherCopy == null ? null : watchTogetherVersionOf(metadata, watchTogetherCopy);
     try {
@@ -126,7 +131,8 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
         metadata: metadata,
         usePushReplacement: true,
         isOffline: _offlineLibraryMode && watchTogetherCopy == null,
-        selectedMediaIndex: version?.index,
+        resolveWatchState: resolveWatchState,
+        selectedMediaIndex: version?.index ?? selectedMediaIndex,
         selectedMediaSourceId: version?.sourceId,
         watchTogetherCopy: watchTogetherCopy,
         queueAnchor: queueAnchor,
@@ -157,9 +163,23 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
     // By identity: the queue matches its own entry objects, and the chosen
     // item may be the entry itself re-stamped with another copy's progress.
     final queueAnchor = identical(episodeMetadata, anchor) ? null : anchor;
+    final pickSignature = copy?.pickSignature;
     final currentPlayer = player;
     if (currentPlayer == null) {
-      if (mounted) unawaited(_replaceScreenWithPlayer(episodeMetadata, queueAnchor: queueAnchor));
+      if (mounted) {
+        unawaited(
+          _replaceScreenWithPlayer(
+            episodeMetadata,
+            queueAnchor: queueAnchor,
+            // The chosen copy carries the furthest progress across copies; a
+            // re-read of its own watch state would undo it.
+            resolveWatchState: copy == null,
+            selectedMediaIndex: pickSignature == null
+                ? null
+                : MediaVersion.findMatchingIndex(episodeMetadata.mediaVersions ?? const [], {pickSignature}),
+          ),
+        );
+      }
       return MediaReloadOutcome.rejected;
     }
 
@@ -180,7 +200,6 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
       // plays.
       final copyInPlay = queueAnchor != null || _queueAnchor != null;
       final changesServer = copyInPlay && episodeMetadata.serverId != _currentMetadata.serverId;
-      final pickSignature = copy?.pickSignature;
       final copyVersionIndex = pickSignature == null
           ? 0
           : MediaVersion.findMatchingIndex(episodeMetadata.mediaVersions ?? const [], {pickSignature}) ?? 0;

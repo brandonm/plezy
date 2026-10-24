@@ -3422,6 +3422,7 @@ void main() {
       WidgetTester tester,
       MediaItem item, {
       required List<_FakeMediaServerClient> clients,
+      List<_FakeMediaServerClient> offline = const [],
       required _FakeCopyResolver resolver,
       CopyPickStore? picks,
       CopyPriorityProvider? priority,
@@ -3445,7 +3446,7 @@ void main() {
       downloadManager.recoveryFuture = Future<void>.value();
       final downloadProvider = DownloadProvider.forTesting(downloadManager: downloadManager, database: db);
       await downloadProvider.ensureInitialized();
-      final multi = testMultiServer(clients: clients);
+      final multi = testMultiServer(clients: clients, offline: offline);
       final watchState = WatchStateStore();
       final offlineWatch = OfflineWatchSyncService(database: db, serverManager: multi.manager);
       // The ⋮ menu resolves admin gating through the active profile.
@@ -3539,6 +3540,47 @@ void main() {
       await deliver(tester);
 
       expect(find.text('Play · Silo Movies 4K Remux'), findsOneWidget);
+    });
+
+    testWidgets('Play starts the copy the page holds without a new lookup', (tester) async {
+      final resolver = _FakeCopyResolver()..answer(plexMovie, [siloMovie, plexMovie], aliases: movieAliases);
+      final launches = await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), clientFor(siloMovie)],
+        resolver: resolver,
+      );
+      await settleLookup(tester);
+      expect(find.text('Play · Silo Movies 4K Remux'), findsOneWidget);
+      // Past the cache's TTL: a read now would wait on the servers again.
+      resolver.forget(plexMovie);
+
+      await tapAndSettle(tester, find.text('Play · Silo Movies 4K Remux'));
+
+      expect([for (final launched in launches) launched.metadata.globalKey], [siloMovie.globalKey]);
+      expect(resolver.asked, [plexMovie.globalKey], reason: 'the held answer, not a second lookup');
+    });
+
+    testWidgets('Play skips a held copy whose server went offline, still without waiting', (tester) async {
+      final resolver = _FakeCopyResolver()..answer(plexMovie, [siloMovie, plexMovie], aliases: movieAliases);
+      final silo = clientFor(siloMovie);
+      final launches = await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), silo],
+        offline: [silo],
+        resolver: resolver,
+      );
+      await settleLookup(tester);
+      resolver.forget(plexMovie);
+
+      await tapAndSettle(
+        tester,
+        find.descendant(of: find.byType(FocusableActionBar), matching: find.byIcon(Symbols.play_arrow_rounded)),
+      );
+
+      expect([for (final launched in launches) launched.metadata.globalKey], [plexMovie.globalKey]);
+      expect(resolver.asked, [plexMovie.globalKey]);
     });
 
     testWidgets('a result holding only the opened copy keeps plain Play', (tester) async {
@@ -4051,6 +4093,9 @@ class _FakeCopyResolver implements CopyResolver {
 
   void answer(MediaItem item, List<MediaItem> copies, {Set<String> aliases = const {}}) =>
       _answerFor(item).complete(ResolvedCopies(copies: copies, aliases: aliases));
+
+  /// The next read of [item] waits again, as one past the cache's TTL does.
+  void forget(MediaItem item) => _answers.remove(item.globalKey);
 
   @override
   Future<ResolvedCopies> copiesOf(MediaItem item, {AbortController? abort}) {

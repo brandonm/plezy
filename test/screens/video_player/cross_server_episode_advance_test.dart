@@ -24,6 +24,7 @@ import 'package:plezy/providers/companion_remote_provider.dart';
 import 'package:plezy/providers/download_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
 import 'package:plezy/providers/playback_state_provider.dart';
+import 'package:plezy/providers/watch_state_store.dart';
 import 'package:plezy/screens/video_player_screen.dart';
 import 'package:plezy/services/copy_pick_store.dart';
 import 'package:plezy/services/copy_resolver.dart';
@@ -36,6 +37,7 @@ import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/storage_service.dart';
 import 'package:plezy/utils/external_ids.dart';
 import 'package:plezy/utils/media_server_http_client.dart';
+import 'package:plezy/utils/video_player_navigation.dart';
 import 'package:plezy/watch_together/providers/watch_together_provider.dart';
 import 'package:provider/provider.dart';
 
@@ -94,6 +96,8 @@ void main() {
     _FakeCopyResolver? resolver,
     CopyPickStore? pickStore,
     DownloadProvider? downloads,
+    WatchStateStore? watchState,
+    List<NavigatorObserver> navigatorObservers = const [],
   }) async {
     final multi = testMultiServer(clients: [origin, other]);
     final offlineWatch = OfflineWatchSyncService(database: db, serverManager: multi.manager);
@@ -130,8 +134,10 @@ void main() {
           if (resolver != null) Provider<CopyResolver>.value(value: resolver),
           Provider<CopyPickStore?>.value(value: pickStore),
           if (downloads != null) ChangeNotifierProvider<DownloadProvider>.value(value: downloads),
+          if (watchState != null) ChangeNotifierProvider<WatchStateStore>.value(value: watchState),
         ],
         child: MaterialApp(
+          navigatorObservers: navigatorObservers,
           home: VideoPlayerScreen(
             key: key,
             metadata: start,
@@ -456,6 +462,71 @@ void main() {
       },
     );
   }
+
+  testWidgets('without a player, the replacement screen keeps the transferred progress and the pick', (tester) async {
+    // Shared preferences answer on the real event loop.
+    final pickStore = CopyPickStore((await tester.runAsync(StorageService.getInstance))!, 'profile-1');
+    final origin = _CopyClient('plex-1', MediaBackend.plex);
+    final silo = _CopyClient('silo', MediaBackend.jellyfin);
+    final e1 = _episode('e1', 'plex-1', 1);
+    // The progress was made on the origin.
+    final e2 = _episode('e2', 'plex-1', 2, viewOffsetMs: 10 * 60 * 1000);
+    // Silo HD lists its versions 4K first; the pick names the 1080p one.
+    final siloE2 = _episode(
+      's-e2',
+      'silo',
+      2,
+      show: 'silo-show',
+      backend: MediaBackend.jellyfin,
+      library: 'hd',
+      versions: _twoVersions.reversed.toList(),
+    );
+    final resolver = _FakeCopyResolver({
+      e2.globalKey: [siloE2],
+    });
+    await tester.runAsync(
+      () => pickStore.write(
+        _FakeCopyResolver.aliases,
+        const CopyPick(key: 'silo:silo-show', lib: 'silo:hd', sig: '1080:h264:mkv', at: 1),
+      ),
+    );
+    final replaced = _ReplaceSpy();
+    final watchState = _OwnOffsetWatchState('s-e2', const Duration(minutes: 1));
+    addTearDown(watchState.dispose);
+
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      testBody: () async {
+        final screen = await pumpPlayer(
+          tester,
+          start: e1,
+          queue: [e1, e2],
+          origin: origin,
+          other: silo,
+          resolver: resolver,
+          pickStore: pickStore,
+          downloads: _Downloads(const {}),
+          watchState: watchState,
+          navigatorObservers: [replaced],
+        );
+        final state = screen.key.currentState!;
+        await settle(tester, state.debugLoadAdjacentEpisodesForTesting);
+        await tester.pump();
+        // No player to reload in place: the advance replaces the screen.
+        state.player = null;
+
+        await settle(tester, state.debugPlayNextForTesting);
+        await pumpUntil(tester, () => replaced.screens.isNotEmpty, describe: () => 'no replacement screen');
+
+        final next = replaced.screens.single;
+        expect(next.metadata.id, 's-e2');
+        expect(next.metadata.viewOffsetMs, 10 * 60 * 1000, reason: "the origin's progress, not Silo's own");
+        expect(next.selectedMediaIndex, 1, reason: "the pick's version in this copy's own list");
+        expect(next.queueAnchor, same(e2));
+      },
+    );
+  });
 
   testWidgets('a screen opened on a copy with its queue anchor keeps the origin queue', (tester) async {
     // The screen-replacement path (_replaceScreenWithPlayer) hands the new
@@ -1060,6 +1131,39 @@ class _AdvancePlayer extends FakeSyncPlayer {
 
   @override
   Future<void> selectSubtitleTrack(SubtitleTrack track) async {}
+}
+
+/// Records the player each video route would replace the screen with, then
+/// swaps in a blank page before its first frame, so no player starts.
+class _ReplaceSpy extends NavigatorObserver {
+  final screens = <VideoPlayerScreen>[];
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (newRoute is! VideoPlayerRoute) return;
+    final nav = navigator!;
+    screens.add(
+      newRoute.buildPage(nav.context, kAlwaysCompleteAnimation, kAlwaysCompleteAnimation) as VideoPlayerScreen,
+    );
+    scheduleMicrotask(
+      () => nav.replace(
+        oldRoute: newRoute,
+        newRoute: MaterialPageRoute<void>(builder: (_) => const SizedBox()),
+      ),
+    );
+  }
+}
+
+/// The session's watch state still holds [id]'s own offset: an overlay of
+/// that key puts it back.
+class _OwnOffsetWatchState extends WatchStateStore {
+  _OwnOffsetWatchState(this.id, this.offset);
+
+  final String id;
+  final Duration offset;
+
+  @override
+  MediaItem apply(MediaItem item) => item.id == id ? item.copyWith(viewOffsetMs: offset.inMilliseconds) : item;
 }
 
 /// One completed download per key in [keys]; records what was asked.

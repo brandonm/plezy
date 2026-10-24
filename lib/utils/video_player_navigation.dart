@@ -36,9 +36,11 @@ import 'global_key_utils.dart';
 import 'platform_detector.dart';
 import 'download_version_utils.dart';
 import 'media_server_http_client.dart';
+import 'media_server_timeouts.dart';
 import 'media_version_resolver.dart';
 import 'provider_extensions.dart';
 import 'quality_preset_labels.dart';
+import 'server_deadline.dart';
 import '../i18n/strings.g.dart';
 
 const String kVideoPlayerRouteName = '/video_player';
@@ -532,14 +534,19 @@ Future<bool?> navigateToVideoPlayer(
 /// parameters and forwards them; [onRefresh] runs on return, as in
 /// [navigateToVideoPlayerWithRefresh].
 ///
-/// Waits at most [maxWait] for the copy lookup. A lookup that fails, times
-/// out or finds only [metadata] plays [metadata] exactly as
-/// [navigateToVideoPlayer] would. So does an explicit launch (offline, a
-/// chosen version, source or start position, a Watch Together copy, a queue
-/// anchor) and a [metadata] with a completed download, which plays from disk.
+/// [resolved] is the answer the caller already holds for [metadata]: used,
+/// narrowed to the servers online now, unless the lookup is warm, with no
+/// wait. Without either, waits at most [maxWait] for the copy lookup, and a
+/// second call for the same [metadata] meanwhile returns without launching.
+/// A lookup that fails, times out or finds only [metadata] plays [metadata]
+/// exactly as [navigateToVideoPlayer] would. So does an explicit launch
+/// (offline, a chosen version, source or start position, a Watch Together
+/// copy, a queue anchor) and a [metadata] with a completed download, which
+/// plays from disk.
 Future<bool?> playBestCopy(
   BuildContext context, {
   required MediaItem metadata,
+  ResolvedCopies? resolved,
   Duration maxWait = const Duration(seconds: 2),
   VoidCallback? onRefresh,
   AudioTrack? preferredAudioTrack,
@@ -568,7 +575,21 @@ Future<bool?> playBestCopy(
       queueAnchor != null ||
       strictMediaSelection ||
       explicitStartPolicy;
-  final best = explicit ? null : await _bestCopyOf(context, metadata, maxWait: maxWait);
+  final _BestCopy? best;
+  if (explicit) {
+    best = null;
+  } else {
+    final key = metadata.globalKey;
+    if (!_choosingCopyFor.add(key)) {
+      appLogger.d('Plain Play of $key is already waiting on its copies, skipping duplicate');
+      return null;
+    }
+    try {
+      best = await _bestCopyOf(context, metadata, held: resolved, maxWait: maxWait);
+    } finally {
+      _choosingCopyFor.remove(key);
+    }
+  }
   if (!context.mounted) return null;
   final result = await navigateToVideoPlayer(
     context,
@@ -599,6 +620,10 @@ Future<bool?> playBestCopy(
   return result;
 }
 
+/// Opened items whose plain Play is choosing a copy: a second press meanwhile
+/// is dropped, so one that waits doesn't launch a second player.
+final _choosingCopyFor = <String>{};
+
 /// What [playBestCopy] launches in place of the opened item: [item] carries
 /// the furthest progress across copies as its `viewOffsetMs`; [mediaIndex]
 /// is the remembered pick's version when the pick chose [item]; and
@@ -608,13 +633,20 @@ typedef _BestCopy = ({MediaItem item, int? mediaIndex, MediaItem? queueAnchor});
 /// The copy plain Play starts for [opened], or null to play [opened] as
 /// today: not a movie or episode, no resolver, a completed download, a
 /// lookup that fails or outlasts [maxWait], or one that found [opened] alone.
-Future<_BestCopy?> _bestCopyOf(BuildContext context, MediaItem opened, {required Duration maxWait}) async {
+/// [held] answers in place of a cold lookup.
+Future<_BestCopy?> _bestCopyOf(
+  BuildContext context,
+  MediaItem opened, {
+  required ResolvedCopies? held,
+  required Duration maxWait,
+}) async {
   if (opened.kind != MediaKind.movie && opened.kind != MediaKind.episode) return null;
   final resolver = context.read<CopyResolver?>();
   if (resolver == null) return null;
   final picks = context.read<CopyPickStore?>();
   final priority = context.read<CopyPriorityProvider?>();
   final downloads = context.read<DownloadProvider>();
+  final heldOnline = held == null ? null : _onlineNow(context, held);
   // Fresh per read: each read hangs a listener on it.
   final abort = AbortController();
   try {
@@ -623,7 +655,7 @@ Future<_BestCopy?> _bestCopyOf(BuildContext context, MediaItem opened, {required
       if (await downloads.getCompletedDownload(opened.globalKey) != null) return null;
       // Before the first read, or the copies sort by resolution alone.
       await priority?.ensureInitialized();
-      return resolver.peek(opened) ?? await resolver.copiesOf(opened, abort: abort);
+      return resolver.peek(opened) ?? heldOnline ?? await resolver.copiesOf(opened, abort: abort);
     }().timeout(maxWait);
     if (resolved == null) return null;
     final copies = resolved.copies;
@@ -652,6 +684,24 @@ Future<_BestCopy?> _bestCopyOf(BuildContext context, MediaItem opened, {required
     appLogger.w('Could not choose a copy of ${opened.globalKey}; playing it as opened', error: e, stackTrace: st);
     return null;
   }
+}
+
+/// [copies] narrowed to the copies on servers online now, as a read of the
+/// lookup would answer; null when none is.
+ResolvedCopies? _onlineNow(BuildContext context, ResolvedCopies copies) {
+  final online = context.read<MultiServerProvider>().serverManager.visibleOnlineClients;
+  final reachable = [
+    for (final copy in copies.copies)
+      if (online.containsKey(copy.serverId)) copy,
+  ];
+  if (reachable.isEmpty) return null;
+  return ResolvedCopies(
+    copies: reachable,
+    failedServerIds: copies.failedServerIds,
+    cancelledServerIds: copies.cancelledServerIds,
+    unqueriedServerIds: copies.unqueriedServerIds,
+    aliases: copies.aliases,
+  );
 }
 
 /// Navigates to the video player and optionally refreshes content when returning.
@@ -897,14 +947,28 @@ Future<ResolvedCopies?> _copiesForPicker(
 
 /// [copies] overlaid with fresh watch state, each with its version list:
 /// rows that came without one (episode listings, Jellyfin resume rows) are
-/// fetched from their own server.
+/// fetched from their own server, within the lookup's per-server deadline.
+/// A copy whose list doesn't come is offered without it.
 Future<ResolvedCopies> _withVersionLists(BuildContext context, ResolvedCopies copies) async {
   Future<MediaItem> listed(MediaItem copy) async {
     if (copy.mediaVersions?.isNotEmpty ?? false) return copy;
     final client = context.tryGetMediaClientForServer(serverIdOrNull(copy.serverId));
     if (client == null) return copy;
-    final versions = await resolveMediaVersions(copy, client);
-    return versions.isEmpty ? copy : copy.copyWith(mediaVersions: versions);
+    try {
+      final versions = await withinServerDeadline(
+        MediaServerTimeouts.libraryLookup,
+        operation: 'Version list of ${copy.globalKey}',
+        run: (_) => resolveMediaVersions(copy, client),
+      );
+      return versions.isEmpty ? copy : copy.copyWith(mediaVersions: versions);
+    } catch (e, st) {
+      appLogger.w(
+        'Could not list the versions of ${copy.globalKey}; offering it without them',
+        error: e,
+        stackTrace: st,
+      );
+      return copy;
+    }
   }
 
   final fresh = context.readFreshWatchStateAll(copies.copies);

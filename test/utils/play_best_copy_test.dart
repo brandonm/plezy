@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openwatchparty/openwatchparty.dart' as owp;
 import 'package:plezy/database/app_database.dart';
+import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_item.dart';
@@ -24,6 +25,7 @@ import 'package:plezy/services/playback_initialization_types.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/storage_service.dart';
 import 'package:plezy/utils/media_server_http_client.dart';
+import 'package:plezy/utils/media_server_timeouts.dart';
 import 'package:plezy/utils/video_player_navigation.dart';
 import 'package:plezy/watch_together/models/watch_copy.dart';
 import 'package:plezy/watch_together/providers/watch_together_provider.dart';
@@ -140,6 +142,46 @@ void main() {
     resolver.complete([silo4k, plex]);
     await tester.pump();
     expect(harness.launches, hasLength(1));
+  });
+
+  testWidgets('a second press while the first waits on the lookup launches nothing', (tester) async {
+    final resolver = _FakeCopyResolver.pending();
+    final harness = await _Harness.pump(tester, resolver: resolver, storage: storage);
+
+    harness.start(plex);
+    await tester.pump(const Duration(milliseconds: 1500));
+    harness.start(plex);
+    await tester.pump(const Duration(milliseconds: 520));
+    await tester.pump();
+    expect(harness.launches, hasLength(1), reason: 'the first press stops waiting at 2 s and plays the opened item');
+
+    // The answer lands while a second wait would still be running.
+    resolver.complete([silo4k, plex]);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+
+    expect([for (final launched in harness.launches) launched.metadata.globalKey], [plex.globalKey]);
+    expect(resolver.asked, [plex.globalKey], reason: 'the second press never asked');
+  });
+
+  testWidgets('Play Version stops waiting for a version list at the lookup deadline', (tester) async {
+    // Silo's row came without its versions, and Silo never answers for them.
+    final siloBare = _movie('m-4k', 'silo', 's-4k');
+    final harness = await _Harness.pump(
+      tester,
+      resolver: _FakeCopyResolver.answering([siloBare, plex]),
+      storage: storage,
+    );
+    harness.clients['silo']!.itemFetch = Completer<MediaItem?>();
+
+    unawaited(promptAndPlayCopyVersion(harness.context, plex));
+    await tester.pump();
+    await tester.pump(MediaServerTimeouts.libraryLookup - const Duration(seconds: 1));
+    expect(find.text(t.mediaMenu.playVersion), findsNothing, reason: 'still within the deadline');
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(find.text(t.mediaMenu.playVersion), findsOneWidget, reason: 'the picker offers Silo without its versions');
   });
 
   testWidgets('completed download plays locally and is not retargeted', (tester) async {
@@ -501,6 +543,12 @@ class _Client implements MediaServerClient {
 
   final String _serverId;
   final externalRequests = <({String id, int mediaIndex, Duration? position})>[];
+
+  /// While set, item reads (a version list's fetch) wait on it.
+  Completer<MediaItem?>? itemFetch;
+
+  @override
+  Future<MediaItem?> fetchItem(String id) => itemFetch?.future ?? Future.value();
 
   @override
   ServerId get serverId => ServerId(_serverId);

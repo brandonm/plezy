@@ -65,6 +65,11 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
           )
         : null;
 
+    // The copies the page holds for what Play starts: Play uses them without
+    // waiting (spec §3), as Play Version does.
+    ResolvedCopies? heldCopiesOf(MediaItem item) =>
+        item.globalKey == playbackTarget?.globalKey ? targetCopies?.copies : null;
+
     Future<void> onPlayPressed() async {
       if (!_canUseDetail) return;
       // For TV shows, play the episode the hero describes (focused on TV,
@@ -76,6 +81,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
           await playBestCopy(
             context,
             metadata: episode,
+            resolved: heldCopiesOf(episode),
             isOffline: widget.isOffline,
             onRefresh: _refreshWatchState,
             isLaunchCurrent: () => _canUseDetail,
@@ -89,6 +95,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
           await playBestCopy(
             context,
             metadata: _episodes.first,
+            resolved: heldCopiesOf(_episodes.first),
             isOffline: widget.isOffline,
             onRefresh: _refreshWatchState,
             isLaunchCurrent: () => _canUseDetail,
@@ -102,6 +109,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
         await playBestCopy(
           context,
           metadata: metadata,
+          resolved: heldCopiesOf(metadata),
           isOffline: widget.isOffline,
           onRefresh: _refreshWatchState,
           isLaunchCurrent: () => _canUseDetail,
