@@ -18,6 +18,7 @@ import '../../widgets/setting_tile.dart';
 import '../../widgets/settings_builder.dart';
 import '../../widgets/settings_page.dart';
 import '../../widgets/settings_section.dart';
+import 'copy_priority_screen.dart';
 import 'external_player_screen.dart';
 import 'mpv_config_screen.dart';
 import 'settings_utils.dart';
@@ -240,6 +241,12 @@ class PlaybackSettingsScreen extends StatelessWidget {
   Widget _behaviorGroup(BuildContext context, bool isMobile) => SettingsGroup(
     title: t.settings.behavior,
     children: [
+      SettingNavigationTile(
+        icon: Symbols.format_list_numbered_rounded,
+        title: t.settings.copyPriority,
+        subtitle: t.settings.copyPriorityDescription,
+        destinationBuilder: (_) => const CopyPriorityScreen(),
+      ),
       SettingSwitchTile(
         pref: SettingsService.rememberTrackSelections,
         icon: Symbols.bookmark_rounded,
