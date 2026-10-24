@@ -330,7 +330,7 @@ testWidgets('resolver error plays the opened item', ...);
 ```
 
 - [ ] **Step 2: Run** `scripts/run_tests.sh test/utils/play_best_copy_test.dart`. Expected: FAIL.
-- [ ] **Step 3: Implement** per §3 steps 1–5. The target is `chooseTarget(copies, pick)`, then `target.copyWith(viewOffsetMs: furthestResumeOffsetMs(target, copies) ?? target.viewOffsetMs)`. Pass `resolveWatchState: false` for the retargeted launch, because the resolver already overlaid watch state and a second overlay of the target's key would overwrite the transferred offset. Use the caller's value for bypassed launches. Switch each listed call site; `media_navigation_helper.dart` switches only when `!isOffline`.
+- [ ] **Step 3: Implement** per §3 steps 1–5. The target is `chooseTarget(copies, pickStore.read(aliases)?.ref)`, then `target.copyWith(viewOffsetMs: furthestResumeOffsetMs(target, copies) ?? target.viewOffsetMs)`. Pass `resolveWatchState: false` for the retargeted launch, because the resolver already overlaid watch state and a second overlay of the target's key would overwrite the transferred offset. Use the caller's value for bypassed launches. Switch each listed call site; `media_navigation_helper.dart` switches only when `!isOffline`.
 - [ ] **Step 4: Run** the file plus `test/utils/video_player_navigation_test.dart` and `test/screens/media_detail_screen_test.dart`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(copies): plain Play starts the best-ranked copy`.
 
