@@ -967,31 +967,48 @@ class DataAggregationService {
   /// composed lookup per server ([TitleCopiesLookup.findTitleCopies]) under
   /// one deadline; a server that fails, times out or is cancelled contributes
   /// nothing and lands in its accounting set, so the others still answer.
-  Future<LibraryLookupResult> findTitleCopiesAcrossServers(TitleQuery query, {AbortController? abort}) =>
-      _copyLookupAcrossServers(
-        'Title copy lookup',
-        abort,
-        (client, legAbort) => client.findTitleCopies(query, abort: legAbort),
-      );
+  /// [serverIds] narrows the wave to those servers, for a caller re-asking
+  /// one server's leg.
+  Future<LibraryLookupResult> findTitleCopiesAcrossServers(
+    TitleQuery query, {
+    AbortController? abort,
+    Set<String>? serverIds,
+  }) => _copyLookupAcrossServers(
+    'Title copy lookup',
+    abort,
+    serverIds,
+    (client, legAbort) => client.findTitleCopies(query, abort: legAbort),
+  );
 
   /// The shows of an episode [query] on the active profile's online servers,
-  /// with the same fan-out, deadline and accounting as
+  /// with the same fan-out, deadline, accounting and [serverIds] narrowing as
   /// [findTitleCopiesAcrossServers]. Callers find an episode's copies through
   /// these shows ([TitleCopiesLookup.episodesOf]).
-  Future<LibraryLookupResult> findShowCopiesAcrossServers(TitleQuery query, {AbortController? abort}) =>
-      _copyLookupAcrossServers(
-        'Show copy lookup',
-        abort,
-        (client, legAbort) => client.findShowCopies(query, abort: legAbort),
-      );
+  Future<LibraryLookupResult> findShowCopiesAcrossServers(
+    TitleQuery query, {
+    AbortController? abort,
+    Set<String>? serverIds,
+  }) => _copyLookupAcrossServers(
+    'Show copy lookup',
+    abort,
+    serverIds,
+    (client, legAbort) => client.findShowCopies(query, abort: legAbort),
+  );
 
   Future<LibraryLookupResult> _copyLookupAcrossServers(
     String label,
     AbortController? abort,
+    Set<String>? serverIds,
     Future<List<MediaItem>> Function(MediaServerClient client, AbortController legAbort) lookup,
   ) async {
     abort?.throwIfAborted();
-    final clients = _serverManager.visibleOnlineClients;
+    final visible = _serverManager.visibleOnlineClients;
+    final clients = serverIds == null
+        ? visible
+        : {
+            for (final entry in visible.entries)
+              if (serverIds.contains(entry.key)) entry.key: entry.value,
+          };
     final fetched = await _fanOut<MediaItem>(
       clients,
       failureMessage: (serverId) => '$label failed on $serverId',

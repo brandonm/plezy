@@ -30,6 +30,8 @@ import '../screens/video_player_screen.dart';
 import '../services/api_cache.dart';
 import '../services/agent_control_service.dart';
 import '../services/catalog/catalog_library_matcher.dart';
+import '../services/copy_pick_store.dart';
+import '../services/copy_resolver.dart';
 import '../services/music/music_playback_service.dart';
 import '../services/music/music_playback_service_impl.dart';
 import '../services/music/music_session_store.dart';
@@ -226,6 +228,25 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
               ChangeNotifierProvider(
                 create: (context) =>
                     CopyPriorityProvider(storageService: context.read<StorageService>(), profileId: activeId),
+                lazy: true,
+              ),
+              // Null without a profile: picks are filed per profile only.
+              Provider<CopyPickStore?>(
+                create: (context) => activeId == null ? null : CopyPickStore(context.read<StorageService>(), activeId),
+                lazy: true,
+              ),
+              // Its cache dies with the session: a profile switch disposes it.
+              Provider(
+                create: (context) {
+                  final multiServer = context.read<MultiServerProvider>();
+                  return CopyResolver(
+                    serverManager: multiServer.serverManager,
+                    aggregation: multiServer.aggregationService,
+                    priority: () => context.read<CopyPriorityProvider>().priority,
+                    freshWatchState: (item) => context.read<WatchStateStore>().apply(item),
+                  );
+                },
+                dispose: (_, resolver) => resolver.dispose(),
                 lazy: true,
               ),
               ChangeNotifierProvider(

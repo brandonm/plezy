@@ -16,6 +16,8 @@ import 'package:plezy/providers/discover_provider.dart';
 import 'package:plezy/providers/hidden_libraries_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
 import 'package:plezy/providers/trackers_provider.dart';
+import 'package:plezy/services/copy_pick_store.dart';
+import 'package:plezy/services/copy_resolver.dart';
 import 'package:plezy/services/multi_server_manager.dart';
 import 'package:plezy/services/offline_watch_sync_service.dart';
 import 'package:plezy/services/storage_service.dart';
@@ -142,6 +144,49 @@ void main() {
     await tester.pumpAndSettle();
     expect(trackerHttpClients.toSet(), hasLength(trackerAuthClientsPerProfile * 3));
     _expectCloseCount(trackerHttpClients, 1);
+  });
+
+  testWidgets('profile switch disposes the copy resolver and scopes copy picks to the new profile', (tester) async {
+    final graph = await _SessionGraph.create();
+    final resolvers = <CopyResolver>[];
+    final pickStores = <CopyPickStore?>[];
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await graph.dispose();
+    });
+
+    final owner = Profile.local(id: 'local-owner', displayName: 'Owner', createdAt: DateTime(2026, 1, 1));
+    final kids = Profile.local(id: 'local-kids', displayName: 'Kids', createdAt: DateTime(2026, 1, 2));
+    await graph.profileRegistry.upsert(owner);
+    await graph.profileRegistry.upsert(kids);
+    await graph.storage.setActiveProfileId(owner.id);
+    await graph.activeProfile.initialize();
+
+    await graph.pump(
+      tester,
+      httpClientFactory: () => FakeHttpClient(200, const <int>[]),
+      profileShellBuilder: (context) {
+        final resolver = context.read<CopyResolver>();
+        if (resolvers.isEmpty || !identical(resolvers.last, resolver)) resolvers.add(resolver);
+        final store = context.read<CopyPickStore?>();
+        if (pickStores.isEmpty || !identical(pickStores.last, store)) pickStores.add(store);
+        return const SizedBox.shrink();
+      },
+    );
+    await tester.pumpAndSettle();
+    const aliases = {'movie|tmdb:603'};
+    await pickStores.single!.write(aliases, const CopyPick(key: 'srv:m1', lib: 'srv:movies', at: 1));
+
+    expect(await graph.activeProfile.activate(kids), isTrue);
+    await tester.pumpAndSettle();
+
+    expect(resolvers, hasLength(2));
+    expect(resolvers.first.isDisposed, isTrue);
+    expect(resolvers.last.isDisposed, isFalse);
+    expect(pickStores, hasLength(2));
+    expect(pickStores.last!.read(aliases), isNull);
+    expect(pickStores.first!.read(aliases)?.key, 'srv:m1');
   });
 
   testWidgets(
