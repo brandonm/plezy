@@ -138,6 +138,14 @@ MediaItem mergeLibraryCopy(MediaItem existing, MediaItem addition) {
   );
 }
 
+/// [item] with the library pair [known] backs it with ([_libraryPair]), every
+/// other field its own. Returns [item] itself when that changes nothing.
+MediaItem withKnownLibrary(MediaItem item, MediaItem known) {
+  final library = _libraryPair(item, known);
+  if (library.libraryId == item.libraryId && library.libraryTitle == item.libraryTitle) return item;
+  return item.copyWith(libraryId: library.libraryId, libraryTitle: library.libraryTitle);
+}
+
 /// Union [additions] into [current] by [MediaItem.globalKey], then re-sort
 /// with [compare], [compareLibraryCopies] by default. A key on both sides is folded by
 /// [mergeLibraryCopy].

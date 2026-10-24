@@ -321,6 +321,28 @@ void main() {
     expect(_keys(resolved), unorderedEquals(['a:m1', 'b:m9']));
   });
 
+  test('movie opened without a library stamp ranks by the library its lookup row names', () async {
+    // Jellyfin Continue Watching rows carry no library.
+    const jf = MediaBackend.jellyfin;
+    final opened = _movie('m1', 'a', height: 1080, viewOffsetMs: 600000, backend: jf);
+    servers
+      ..add(
+        _Server('a', backend: jf)
+          ..ids['m1'] = const ExternalIds(tmdb: 603)
+          ..byIds[MediaKind.movie] = [_movie('m1', 'a', library: 'remux', height: 1080, backend: jf)],
+      )
+      ..add(_Server('b')..byIds[MediaKind.movie] = [_movie('m9', 'b', library: 'hd', height: 2160)]);
+    priority = ['a:remux', 'b:hd'];
+
+    final resolved = await resolver().copiesOf(opened);
+
+    expect(_keys(resolved), ['a:m1', 'b:m9']);
+    final own = resolved.copies.first;
+    expect(own.libraryId, 'remux');
+    expect(own.libraryTitle, 'remux');
+    expect(own.viewOffsetMs, 600000, reason: 'everything else is the opened object');
+  });
+
   test('two copies on one server in two libraries both rank', () async {
     final opened = _movie('m4k', 's', library: '4k', height: 2160);
     servers.add(
@@ -843,6 +865,36 @@ void main() {
     expect(_keys(second), containsAll(['silo:eRemux', 'silo:e4k', 'silo:eHd', 'plex:pE']));
     expect(fixture.silo.lookupsOf(MediaKind.show), 2);
     expect(copies.peek(fixture.opened), isNotNull);
+  });
+
+  test('an episode read joining a show load that overlapped an event is not cached on it', () async {
+    final fixture = siloShow();
+    final shows = fixture.silo.byIds[MediaKind.show]!;
+    fixture.silo.byIds[MediaKind.show] = []; // Silo doesn't hold the show yet.
+    final show = _show('pShow', 'plex', library: 'tv');
+    final copies = resolver();
+    final gate = Completer<void>();
+    fixture.silo.gates.add(gate);
+    final showRead = copies.copiesOf(show); // Silo has answered "none", held.
+    await pumpEventQueue();
+
+    // The show arrives on Silo, and its event with it.
+    fixture.silo.byIds[MediaKind.show] = shows;
+    LibraryContentNotifier().notifyChanged(
+      LibraryChangeEvent(serverId: ServerId('silo'), libraryIds: const {'hd'}, itemsAdded: true),
+    );
+    await pumpEventQueue();
+
+    final episodeRead = copies.episodeCopiesOf(fixture.opened); // joins the show load
+    await pumpEventQueue();
+    gate.complete();
+    await showRead;
+    expect(_keys(await episodeRead), ['plex:pE']);
+    expect(copies.peek(show), isNull);
+    expect(copies.peek(fixture.opened), isNull, reason: 'built on a show answer that was not cached');
+
+    final second = await copies.episodeCopiesOf(fixture.opened);
+    expect(_keys(second), containsAll(['silo:eRemux', 'silo:e4k', 'silo:eHd', 'plex:pE']));
   });
 
   test('a server whose show re-ask failed is not recorded as asked for the episode', () async {

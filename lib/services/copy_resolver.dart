@@ -37,7 +37,8 @@ class ResolvedCopies {
   /// Best-first, never empty; contains the opened item unless its server is
   /// offline and another copy is online. Only copies on servers online right
   /// now appear. The opened item appears once, as the object the caller
-  /// passed, whatever the lookup returned for it.
+  /// passed, whatever the lookup returned for it, except for the library a
+  /// stampless opened item takes from its own row.
   final List<MediaItem> copies;
 
   /// Servers that failed, were cancelled, or were never asked, kept apart
@@ -232,16 +233,16 @@ class CopyResolver {
   /// One lookup per [key] at a time: concurrent reads share it. Its answer
   /// goes to them either way, but is cached only if no library change
   /// arrived meanwhile for a server it asked, and it wasn't built on a
-  /// provisional answer.
+  /// provisional answer. One a change overlapped is marked provisional, so
+  /// an episode read built on it isn't cached either.
   Future<_Entry> _load(String key, Future<_Entry> Function() lookUp) {
     final pending = _loading[key];
     if (pending != null) return pending;
     _entries.removeWhere((_, entry) => _isExpired(entry));
     final changesBefore = Map.of(_changes);
     final future = lookUp().then((entry) {
-      if (!_disposed && !entry.provisional && !_changedSince(changesBefore, entry.scopes.keys)) {
-        _entries[key] = entry;
-      }
+      if (_changedSince(changesBefore, entry.scopes.keys)) entry.provisional = true;
+      if (!_disposed && !entry.provisional) _entries[key] = entry;
       return entry;
     });
     _loading[key] = future;
@@ -303,6 +304,8 @@ class CopyResolver {
   /// [entry]'s copies on servers online now (and under the session they were
   /// fetched with), the opened item swapped in for its own row, overlaid and
   /// sorted. When none is online, the opened item alone, as [_alone] answers.
+  /// An opened item that came without a library (a Jellyfin resume row) takes
+  /// its own row's, or its show copy's, so it ranks where it lives.
   ResolvedCopies _view(_Entry entry, MediaItem opened) {
     final online = _serverManager.visibleOnlineClients;
     bool live(MediaItem copy) {
@@ -311,8 +314,12 @@ class CopyResolver {
       return client != null && (scope == null || scope.matches(client));
     }
 
+    final ownRow = entry.copiesByServer[opened.serverId]
+        ?.where((copy) => copy.globalKey == opened.globalKey)
+        .firstOrNull;
     final ownShow = entry.ownShow;
-    final own = ownShow == null ? opened : stampFromShow(opened, ownShow);
+    final stamped = ownRow == null ? opened : withKnownLibrary(opened, ownRow);
+    final own = ownShow == null ? stamped : stampFromShow(stamped, ownShow);
     final reachable = [
       if (online.containsKey(opened.serverId)) own,
       for (final serverCopies in entry.copiesByServer.values)
@@ -632,8 +639,8 @@ class _Entry {
   final String? showKey;
 
   /// Holds an answer that is handed to the read that waited for it but never
-  /// cached: a re-ask that overlapped a library change, or one built on such
-  /// an answer.
+  /// cached: a lookup or re-ask that overlapped a library change, or one
+  /// built on such an answer.
   bool provisional;
 
   MediaItem? ownShow;
