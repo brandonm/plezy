@@ -240,7 +240,7 @@ Future<MediaNavigationResult> navigateToMediaItem(
       if (mi.kind == MediaKind.episode && shouldOpenEpisodeDetails) {
         return navigateToMediaItemDetails(context, mi, onRefresh: onRefresh, isOffline: isOffline);
       }
-      final result = await navigateToVideoPlayer(context, metadata: mi, isOffline: isOffline);
+      final result = await playBestCopy(context, metadata: mi, isOffline: isOffline);
       if (result == true && context.mounted) {
         onRefresh?.call(mi);
       }
@@ -248,7 +248,7 @@ Future<MediaNavigationResult> navigateToMediaItem(
 
     case MediaKind.movie:
       if (playDirectly && !shouldOpenContinueWatchingDetails) {
-        final result = await navigateToVideoPlayer(context, metadata: mi, isOffline: isOffline);
+        final result = await playBestCopy(context, metadata: mi, isOffline: isOffline);
         if (result == true && context.mounted) {
           onRefresh?.call(mi);
         }

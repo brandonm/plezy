@@ -6,17 +6,22 @@ import 'package:flutter/material.dart';
 
 import 'package:provider/provider.dart';
 
+import '../media/copy_selection.dart';
 import '../media/media_item.dart';
+import '../media/media_kind.dart';
 import '../media/media_version.dart';
 import '../media/media_version_preference.dart';
 import '../mpv/mpv.dart';
 import '../models/transcode_quality_preset.dart';
+import '../providers/copy_priority_provider.dart';
 import '../providers/download_provider.dart';
 import '../providers/multi_server_provider.dart';
 import '../providers/watch_state_store.dart';
 import '../watch_together/providers/watch_together_provider.dart';
 import '../watch_together/models/watch_copy.dart';
 import '../screens/video_player_screen.dart';
+import '../services/copy_pick_store.dart';
+import '../services/copy_resolver.dart';
 import '../services/external_player_service.dart';
 import '../services/local_playback_history.dart';
 import '../services/offline_watch_sync_service.dart';
@@ -29,6 +34,7 @@ import 'dialogs.dart';
 import 'global_key_utils.dart';
 import 'platform_detector.dart';
 import 'download_version_utils.dart';
+import 'media_server_http_client.dart';
 import 'media_version_resolver.dart';
 import 'provider_extensions.dart';
 import 'quality_preset_labels.dart';
@@ -517,6 +523,131 @@ Future<bool?> navigateToVideoPlayer(
     if (markedInFlight) _inFlightLaunches.remove(launchIdentity);
   }
   return pushFuture;
+}
+
+/// Plain Play: starts the best copy of [metadata] across the profile's
+/// servers, the remembered pick or else the top-ranked copy, from the
+/// furthest progress across copies. Takes [navigateToVideoPlayer]'s
+/// parameters and forwards them; [onRefresh] runs on return, as in
+/// [navigateToVideoPlayerWithRefresh].
+///
+/// Waits at most [maxWait] for the copy lookup. A lookup that fails, times
+/// out or finds only [metadata] plays [metadata] exactly as
+/// [navigateToVideoPlayer] would. So does an explicit launch (offline, a
+/// chosen version, source or start position, a Watch Together copy, a queue
+/// anchor) and a [metadata] with a completed download, which plays from disk.
+Future<bool?> playBestCopy(
+  BuildContext context, {
+  required MediaItem metadata,
+  Duration maxWait = const Duration(seconds: 2),
+  VoidCallback? onRefresh,
+  AudioTrack? preferredAudioTrack,
+  SubtitleTrack? preferredSubtitleTrack,
+  SubtitleTrack? preferredSecondarySubtitleTrack,
+  int? selectedMediaIndex,
+  String? selectedMediaSourceId,
+  TranscodeQualityPreset? selectedQualityPreset,
+  bool usePushReplacement = false,
+  bool isOffline = false,
+  bool resolveWatchState = true,
+  WatchCopy? watchTogetherCopy,
+  MediaItem? queueAnchor,
+  bool Function()? isLaunchCurrent,
+  Duration? initialPosition,
+  bool strictMediaSelection = false,
+  bool explicitStartPolicy = false,
+  PlaybackLaunchObserver? launchObserver,
+}) async {
+  final explicit =
+      isOffline ||
+      selectedMediaIndex != null ||
+      selectedMediaSourceId != null ||
+      initialPosition != null ||
+      watchTogetherCopy != null ||
+      queueAnchor != null ||
+      strictMediaSelection ||
+      explicitStartPolicy;
+  final best = explicit ? null : await _bestCopyOf(context, metadata, maxWait: maxWait);
+  if (!context.mounted) return null;
+  final result = await navigateToVideoPlayer(
+    context,
+    metadata: best?.item ?? metadata,
+    preferredAudioTrack: preferredAudioTrack,
+    preferredSubtitleTrack: preferredSubtitleTrack,
+    preferredSecondarySubtitleTrack: preferredSecondarySubtitleTrack,
+    selectedMediaIndex: best == null ? selectedMediaIndex : best.mediaIndex,
+    selectedMediaSourceId: selectedMediaSourceId,
+    selectedQualityPreset: selectedQualityPreset,
+    usePushReplacement: usePushReplacement,
+    isOffline: isOffline,
+    // The lookup already overlaid each copy's watch state; a second overlay
+    // of the target's own key would undo the transferred offset.
+    resolveWatchState: best == null ? resolveWatchState : false,
+    watchTogetherCopy: watchTogetherCopy,
+    queueAnchor: best == null ? queueAnchor : best.queueAnchor,
+    isLaunchCurrent: isLaunchCurrent,
+    initialPosition: initialPosition,
+    strictMediaSelection: strictMediaSelection,
+    explicitStartPolicy: explicitStartPolicy,
+    launchObserver: launchObserver,
+  );
+  if (onRefresh != null) {
+    appLogger.d('Returned from playback, refreshing metadata');
+    if (!isOffline && context.mounted && (isLaunchCurrent?.call() ?? true)) onRefresh();
+  }
+  return result;
+}
+
+/// What [playBestCopy] launches in place of the opened item: [item] carries
+/// the furthest progress across copies as its `viewOffsetMs`; [mediaIndex]
+/// is the remembered pick's version when the pick chose [item]; and
+/// [queueAnchor] is the opened episode when [item] is another copy of it.
+typedef _BestCopy = ({MediaItem item, int? mediaIndex, MediaItem? queueAnchor});
+
+/// The copy plain Play starts for [opened], or null to play [opened] as
+/// today: not a movie or episode, no resolver, a completed download, a
+/// lookup that fails or outlasts [maxWait], or one that found [opened] alone.
+Future<_BestCopy?> _bestCopyOf(BuildContext context, MediaItem opened, {required Duration maxWait}) async {
+  if (opened.kind != MediaKind.movie && opened.kind != MediaKind.episode) return null;
+  final resolver = context.read<CopyResolver?>();
+  if (resolver == null) return null;
+  final picks = context.read<CopyPickStore?>();
+  final priority = context.read<CopyPriorityProvider?>();
+  final downloads = context.read<DownloadProvider>();
+  // Fresh per read: each read hangs a listener on it.
+  final abort = AbortController();
+  try {
+    final resolved = await () async {
+      // A downloaded item plays its local file; another copy's key would miss it.
+      if (await downloads.getCompletedDownload(opened.globalKey) != null) return null;
+      // Before the first read, or the copies sort by resolution alone.
+      await priority?.ensureInitialized();
+      return resolver.peek(opened) ?? await resolver.copiesOf(opened, abort: abort);
+    }().timeout(maxWait);
+    if (resolved == null) return null;
+    final copies = resolved.copies;
+    if (copies.isEmpty || (copies.length == 1 && copies.single.globalKey == opened.globalKey)) return null;
+
+    final pick = picks?.read(resolved.aliases)?.ref;
+    final target = chooseTarget(copies, pick);
+    final pickChoseIt = pick != null && (copyPickKey(target) == pick.key || target.libraryGlobalKey == pick.lib);
+    final pickSignature = pickChoseIt ? pick.sig : null;
+    appLogger.d('Plain Play of ${opened.globalKey} starts ${target.globalKey}');
+    return (
+      item: target.copyWith(viewOffsetMs: furthestResumeOffsetMs(target, copies) ?? target.viewOffsetMs),
+      mediaIndex: pickSignature == null
+          ? null
+          : MediaVersion.findMatchingIndex(target.mediaVersions ?? const [], {pickSignature}),
+      queueAnchor: opened.kind == MediaKind.episode && target.globalKey != opened.globalKey ? opened : null,
+    );
+  } on TimeoutException {
+    abort.abort();
+    appLogger.w('Copy lookup for ${opened.globalKey} took over $maxWait; playing it as opened');
+    return null;
+  } catch (e, st) {
+    appLogger.w('Could not choose a copy of ${opened.globalKey}; playing it as opened', error: e, stackTrace: st);
+    return null;
+  }
 }
 
 /// Navigates to the video player and optionally refreshes content when returning.

@@ -1606,7 +1606,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             return InkWell(
               onTap: () {
                 appLogger.d('Playing: ${heroItem.title}');
-                navigateToVideoPlayer(context, metadata: heroItem);
+                playBestCopy(context, metadata: heroItem);
               },
               borderRadius: BorderRadius.all(Radius.circular(isTv ? 32 : 24)),
               child: AnimatedContainer(

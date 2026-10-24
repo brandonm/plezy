@@ -68,7 +68,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
         final episode = _showPlayEpisode();
         if (episode != null) {
           appLogger.d('Playing episode: ${episode.title}');
-          await navigateToVideoPlayerWithRefresh(
+          await playBestCopy(
             context,
             metadata: episode,
             isOffline: widget.isOffline,
@@ -81,7 +81,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       } else if (metadata.isSeason) {
         // For seasons, play the first episode
         if (_episodes.isNotEmpty) {
-          await navigateToVideoPlayerWithRefresh(
+          await playBestCopy(
             context,
             metadata: _episodes.first,
             isOffline: widget.isOffline,
@@ -94,7 +94,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       } else {
         appLogger.d('Playing: ${metadata.title}');
         // For movies or episodes, play directly
-        await navigateToVideoPlayerWithRefresh(
+        await playBestCopy(
           context,
           metadata: metadata,
           isOffline: widget.isOffline,

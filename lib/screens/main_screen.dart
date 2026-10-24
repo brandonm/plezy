@@ -937,7 +937,7 @@ class _MainScreenState extends State<MainScreen>
 
       if (metadata == null || !mounted) return;
 
-      unawaited(navigateToVideoPlayer(context, metadata: metadata));
+      unawaited(playBestCopy(context, metadata: metadata));
     } catch (e) {
       appLogger.e('System shelf: failed to navigate to media', error: e);
     }

@@ -2963,7 +2963,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
               : null,
           localPosterPath: localPosterPath,
           onTap: () async {
-            await navigateToVideoPlayerWithRefresh(
+            await playBestCopy(
               context,
               metadata: episode,
               isOffline: widget.isOffline,
@@ -3391,7 +3391,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       );
       if (mounted && _canUseDetail) {
         appLogger.d('Playing first episode: ${episodeWithServerId.title}');
-        await navigateToVideoPlayerWithRefresh(
+        await playBestCopy(
           context,
           metadata: episodeWithServerId,
           isOffline: widget.isOffline,
@@ -4498,7 +4498,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
   Future<bool> _handleTvDetailRailItemActivated(MediaHub hub, MediaItem item) async {
     if (_isTvDetailEpisodeHub(hub) && item.isEpisode) {
-      await navigateToVideoPlayerWithRefresh(
+      await playBestCopy(
         context,
         metadata: item,
         isOffline: widget.isOffline,
