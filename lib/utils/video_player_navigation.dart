@@ -686,13 +686,14 @@ Future<_BestCopy?> _bestCopyOf(
   }
 }
 
-/// [copies] narrowed to the copies on servers online now, as a read of the
-/// lookup would answer; null when none is.
+/// [copies] narrowed to the copies on servers online now and overlaid with
+/// fresh watch state, as a read of the lookup would answer; null when none is.
+/// The caller read them earlier, so their progress may be stale.
 ResolvedCopies? _onlineNow(BuildContext context, ResolvedCopies copies) {
   final online = context.read<MultiServerProvider>().serverManager.visibleOnlineClients;
   final reachable = [
     for (final copy in copies.copies)
-      if (online.containsKey(copy.serverId)) copy,
+      if (online.containsKey(copy.serverId)) context.readFreshWatchState(copy),
   ];
   if (reachable.isEmpty) return null;
   return ResolvedCopies(

@@ -184,6 +184,25 @@ void main() {
     expect(find.text(t.mediaMenu.playVersion), findsOneWidget, reason: 'the picker offers Silo without its versions');
   });
 
+  testWidgets("the caller's held copies are re-read against the session's watch state", (tester) async {
+    // The page read its copies before Silo 4K was watched; the session's
+    // watch state now reports 5 min for it (_StaleWatchState). The cache is
+    // past its TTL, so only the held answer is at hand.
+    final heldSilo = _movie('m-4k', 'silo', 's-4k', versions: silo4k.mediaVersions);
+    final heldPlex = _movie('m-plex', 'plex', 'p-movies');
+    final held = ResolvedCopies(copies: [heldSilo, heldPlex], aliases: _aliases);
+    final resolver = _FakeCopyResolver.pending();
+    final harness = await _Harness.pump(tester, resolver: resolver, storage: storage);
+
+    unawaited(playBestCopy(harness.context, metadata: heldPlex, resolved: held));
+    await pumpUntil(tester, () => harness.launches.isNotEmpty, describe: () => 'no player launch');
+
+    final launched = harness.launches.single;
+    expect(launched.metadata.globalKey, heldSilo.globalKey);
+    expect(launched.metadata.viewOffsetMs, 5 * _minute, reason: "the session's progress, not the held snapshot's");
+    expect(resolver.asked, isEmpty, reason: 'the held answer, no wait');
+  });
+
   testWidgets('completed download plays locally and is not retargeted', (tester) async {
     final resolver = _FakeCopyResolver.answering([silo4k, plex]);
     final harness = await _Harness.pump(
