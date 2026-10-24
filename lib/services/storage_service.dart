@@ -20,6 +20,7 @@ class StorageService extends BaseSharedPreferencesService {
   static const String _keyCurrentUserUUID = 'current_user_uuid';
   static const String _keyHiddenLibraries = 'hidden_libraries';
   static const String _keyCopyPriority = 'copy_priority';
+  static const String _keyCopyPicks = 'copy_picks';
   static const String _keyServersList = 'servers_list';
   static const String _keyServerOrder = 'server_order';
   static const String _keyActiveProfileId = 'active_app_profile_id';
@@ -40,6 +41,7 @@ class StorageService extends BaseSharedPreferencesService {
     _keyLibraryOrder,
     _keyHiddenLibraries,
     _keyCopyPriority,
+    _keyCopyPicks,
   ];
 
   StorageService._();
@@ -414,6 +416,7 @@ class StorageService extends BaseSharedPreferencesService {
       _filterServerEntriesFromAllStringListKeys(_keyLibraryOrder, serverId),
       _filterServerEntriesFromAllStringListKeys(_keyHiddenLibraries, serverId),
       _filterServerEntriesFromAllStringListKeys(_keyCopyPriority, serverId),
+      _forEachScopedKey(_keyCopyPicks, (key) => _dropCopyPicksForServer(key, serverId)),
       _clearServerSelectedLibraryKeysEverywhere(serverId),
       _clearServerPerLibraryKeysEverywhere(_prefixLibrarySort, serverId),
       _clearServerPerLibraryKeysEverywhere(_prefixLibraryFilters, serverId),
@@ -427,6 +430,7 @@ class StorageService extends BaseSharedPreferencesService {
       _filterServerEntriesFromStringList('$prefix$_keyLibraryOrder', serverId),
       _filterServerEntriesFromStringList('$prefix$_keyHiddenLibraries', serverId),
       _filterServerEntriesFromStringList('$prefix$_keyCopyPriority', serverId),
+      _dropCopyPicksForServer('$prefix$_keyCopyPicks', serverId),
       _clearSelectedLibraryForServer('$prefix$_keySelectedLibraryKey', serverId),
       _clearKeysWithPrefixForServer('$prefix$_prefixLibrarySort', serverId),
       _clearKeysWithPrefixForServer('$prefix$_prefixLibraryFilters', serverId),
@@ -442,6 +446,41 @@ class StorageService extends BaseSharedPreferencesService {
 
   List<String> getCopyPriorityForProfile(String profileId) =>
       _getStringList('${_userPrefixForProfileId(profileId)}$_keyCopyPriority') ?? const [];
+
+  // Copy picks: one raw JSON value per profile, `{"records": {id: {key, lib,
+  // sig, at}}, "aliases": {alias: id}}`. The shape is owned by CopyPickStore.
+  // Per device and per profile; deliberately not part of settings export.
+  Future<void> saveCopyPicksJsonForProfile(String profileId, String jsonString) =>
+      prefs.setString('${_userPrefixForProfileId(profileId)}$_keyCopyPicks', jsonString);
+
+  String? getCopyPicksJsonForProfile(String profileId) =>
+      readNullableString('${_userPrefixForProfileId(profileId)}$_keyCopyPicks');
+
+  /// Delete copy-pick records whose `lib` (`serverId:libraryId`) names
+  /// [serverId], with every alias pointing at them. The string-list filter
+  /// cannot reach inside this JSON map.
+  Future<void> _dropCopyPicksForServer(String key, ServerId serverId) async {
+    final raw = readNullableString(key);
+    if (raw == null) return;
+    try {
+      final decoded = json.decode(raw) as Map<String, dynamic>;
+      final records = Map<String, dynamic>.from(decoded['records'] as Map);
+      final doomed = records.entries
+          .where((e) => _belongsToServer((e.value as Map)['lib'] as String? ?? '', serverId))
+          .map((e) => e.key)
+          .toSet();
+      if (doomed.isEmpty) return;
+      records.removeWhere((id, _) => doomed.contains(id));
+      if (records.isEmpty) {
+        await prefs.remove(key);
+        return;
+      }
+      final aliases = Map<String, dynamic>.from(decoded['aliases'] as Map)..removeWhere((_, id) => doomed.contains(id));
+      await prefs.setString(key, json.encode({'records': records, 'aliases': aliases}));
+    } catch (_) {
+      // Unreadable value: nothing trustworthy to prune.
+    }
+  }
 
   // Library Order (stored as JSON list of library keys)
   Future<void> saveLibraryOrder(List<String> libraryKeys, {String? profileId}) async {
