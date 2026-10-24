@@ -787,6 +787,104 @@ void main() {
     });
   });
 
+  test('a background refetch overlapping an event on its own server is not folded in', () async {
+    final fixture = twoServerMovie();
+    servers.online.remove('b');
+    final copies = resolver();
+    await copies.copiesOf(fixture.opened);
+    final gate = Completer<void>();
+    fixture.b.gates.add(gate);
+    servers.add(fixture.b);
+    await copies.copiesOf(fixture.opened); // b's leg in the background, answer taken before the event
+    await pumpEventQueue();
+
+    // The entry has no copy on b yet, so the event does not drop it.
+    LibraryContentNotifier().notifyChanged(
+      LibraryChangeEvent(serverId: ServerId('b'), libraryIds: const {'4k'}, itemsRemoved: true),
+    );
+    await pumpEventQueue();
+    expect(copies.peek(fixture.opened), isNotNull);
+    gate.complete();
+    await pumpEventQueue();
+
+    expect(_keys(copies.peek(fixture.opened)!), ['a:m1']);
+    await copies.copiesOf(fixture.opened);
+    await pumpEventQueue();
+    expect(fixture.b.lookups, hasLength(2));
+  });
+
+  test('a show refetch discarded by an event still answers the episode read, which is not cached on it', () async {
+    final fixture = siloShow();
+    servers.online.remove('silo');
+    final show = _show('pShow', 'plex', library: 'tv');
+    final copies = resolver();
+    await copies.copiesOf(show); // show entry cached without silo
+    final gate = Completer<void>();
+    fixture.silo.gates.add(gate);
+    servers.add(fixture.silo);
+    await copies.copiesOf(show); // silo's show leg re-asked in the background, held
+    await pumpEventQueue();
+
+    // An event on silo: the show entry has no silo copy, so it stays.
+    LibraryContentNotifier().notifyChanged(
+      LibraryChangeEvent(serverId: ServerId('silo'), libraryIds: const {'hd'}, itemsAdded: true),
+    );
+    await pumpEventQueue();
+
+    final pending = copies.episodeCopiesOf(fixture.opened); // waits on the held show refetch
+    await pumpEventQueue();
+    gate.complete();
+    final first = await pending;
+
+    expect(_keys(first), containsAll(['silo:eRemux', 'silo:e4k', 'silo:eHd', 'plex:pE']));
+    expect(copies.peek(fixture.opened), isNull, reason: 'built on a show answer that was not cached');
+
+    final second = await copies.episodeCopiesOf(fixture.opened);
+    expect(_keys(second), containsAll(['silo:eRemux', 'silo:e4k', 'silo:eHd', 'plex:pE']));
+    expect(fixture.silo.lookupsOf(MediaKind.show), 2);
+    expect(copies.peek(fixture.opened), isNotNull);
+  });
+
+  test('a server whose show re-ask failed is not recorded as asked for the episode', () async {
+    final fixture = siloShow();
+    servers.online.remove('silo');
+    final show = _show('pShow', 'plex', library: 'tv');
+    final copies = resolver(aggregation: _FailOnceShowAggregation(servers, 'silo'));
+    await copies.copiesOf(show); // show entry cached without silo
+    servers.add(fixture.silo);
+
+    final first = await copies.episodeCopiesOf(fixture.opened); // silo's show re-ask throws
+    expect(_keys(first), ['plex:pE']);
+    expect(first.unqueriedServerIds, {'silo'});
+
+    await copies.episodeCopiesOf(fixture.opened); // silo still unasked: re-asked in the background
+    await pumpEventQueue();
+    final third = await copies.episodeCopiesOf(fixture.opened);
+
+    expect(_keys(third), containsAll(['silo:eRemux', 'silo:e4k', 'silo:eHd', 'plex:pE']));
+    expect(third.unqueriedServerIds, isEmpty);
+  });
+
+  test('settled reads leave nothing in flight to retain them', () async {
+    final fixture = siloShow();
+    final movie = twoServerMovie();
+    final copies = resolver();
+
+    await copies.copiesOf(movie.opened);
+    await copies.episodeCopiesOf(fixture.opened);
+    final gate = Completer<void>();
+    movie.b.gates.add(gate);
+    movie.b.authenticationSessionId = Object();
+    final pending = copies.copiesOf(movie.opened); // waits on b's re-ask
+    await pumpEventQueue();
+    expect(copies.inFlightCount, greaterThan(0));
+    gate.complete();
+    await pending;
+    await pumpEventQueue();
+
+    expect(copies.inFlightCount, 0);
+  });
+
   test('a lookup that throws leaves the opened item alone, uncached', () async {
     final opened = _movie('m1', 'a', library: 'movies');
     servers.add(_Server('a'));
@@ -825,6 +923,27 @@ void main() {
 
     expect((await pending).copies, [same(fixture.opened)]);
   });
+}
+
+/// Real aggregation whose show lookup throws once when it asks [server].
+class _FailOnceShowAggregation extends DataAggregationService {
+  _FailOnceShowAggregation(super.serverManager, this.server);
+
+  final String server;
+  var failed = false;
+
+  @override
+  Future<LibraryLookupResult> findShowCopiesAcrossServers(
+    TitleQuery query, {
+    AbortController? abort,
+    Set<String>? serverIds,
+  }) async {
+    if (!failed && (serverIds?.contains(server) ?? false)) {
+      failed = true;
+      throw StateError('show re-ask failed');
+    }
+    return super.findShowCopiesAcrossServers(query, abort: abort, serverIds: serverIds);
+  }
 }
 
 class _ThrowingAggregation extends DataAggregationService {

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../exceptions/media_server_exceptions.dart';
 import '../media/copy_selection.dart';
 import '../media/library_change_event.dart';
@@ -87,11 +89,17 @@ class CopyResolver {
   /// pre-change answer, so it is not cached ([_changedSince]).
   final Map<String, int> _changes = {};
 
-  /// Aborted on [dispose]; every lookup runs under it. A caller's own abort
-  /// only stops that caller waiting, since others may share the lookup.
-  final AbortController _lifetime = AbortController();
+  /// One abort per piece of work in flight ([_scoped]), aborted on [dispose]
+  /// and dropped as soon as that work settles. Nothing per call hangs off a
+  /// session-long object, so a settled read retains nothing. A caller's own
+  /// abort only stops that caller waiting, since others may share the lookup.
+  final Set<AbortController> _inFlight = {};
   StreamSubscription<LibraryChangeEvent>? _libraryEvents;
   bool _disposed = false;
+
+  /// How many pieces of work are in flight; 0 once every read has settled.
+  @visibleForTesting
+  int get inFlightCount => _inFlight.length;
 
   /// Copies of a movie or show; an episode goes to [episodeCopiesOf].
   Future<ResolvedCopies> copiesOf(MediaItem item, {AbortController? abort}) => switch (item.kind) {
@@ -128,7 +136,11 @@ class CopyResolver {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _lifetime.abort();
+    final inFlight = List.of(_inFlight);
+    _inFlight.clear();
+    for (final abort in inFlight) {
+      abort.abort();
+    }
     unawaited(_libraryEvents?.cancel());
     _libraryEvents = null;
     _entries.clear();
@@ -138,7 +150,7 @@ class CopyResolver {
   Future<ResolvedCopies> _resolve(MediaItem item, Future<_Entry> Function() lookUp, AbortController? abort) async {
     if (_disposed) return _alone(item);
     try {
-      final entry = await _waitUnless(abort, _waitUnless(_lifetime, _current(item.globalKey, lookUp)));
+      final entry = await _waitUnless(abort, _scoped((_) => _current(item.globalKey, lookUp)));
       return _disposed ? _alone(item) : _view(entry, item);
     } catch (error, stackTrace) {
       if (abort?.isAborted ?? false) rethrow;
@@ -153,6 +165,32 @@ class CopyResolver {
     if (abort == null) return future;
     abort.throwIfAborted();
     return Future.any([future, abort.trigger.then<T>((_) => throw _cancelled('Copy lookup wait'))]);
+  }
+
+  /// [run] with its own abort, which [dispose] fires: the returned future
+  /// then fails at once with a cancellation, even when [run] makes a backend
+  /// call that takes no abort. The abort is forgotten as soon as [run]
+  /// settles, and with it everything [run] hung on it.
+  Future<T> _scoped<T>(Future<T> Function(AbortController abort) run) {
+    if (_disposed) return Future.error(_cancelled('Copy lookup'));
+    final abort = AbortController();
+    _inFlight.add(abort);
+    final result = Completer<T>();
+    unawaited(
+      abort.trigger.then((_) {
+        if (!result.isCompleted) result.completeError(_cancelled('Copy lookup'));
+      }),
+    );
+    void settle(void Function() complete) {
+      _inFlight.remove(abort);
+      if (!result.isCompleted) complete();
+    }
+
+    Future.sync(() => run(abort)).then(
+      (value) => settle(() => result.complete(value)),
+      onError: (Object error, StackTrace stackTrace) => settle(() => result.completeError(error, stackTrace)),
+    );
+    return result.future;
   }
 
   /// The entry under [key], fresh: loaded (or re-loaded past the TTL), with
@@ -175,7 +213,16 @@ class CopyResolver {
         if (!entry.scopes.containsKey(serverId) || (!loaded && entry.cancelled.contains(serverId))) serverId,
     };
     if (reauthenticated.isNotEmpty || (awaitNewServers && cameOnline.isNotEmpty)) {
-      await _refetchLegs(key, entry, {...reauthenticated, ...cameOnline});
+      final refetched = await _refetchLegs(key, entry, {...reauthenticated, ...cameOnline});
+      if (refetched.every((refetch) => refetch.kept)) return entry;
+      // A refetch this read waited for was not cached (a library change
+      // overlapped it, or the entry was replaced): this read still gets its
+      // answer, in a copy that is never cached either.
+      final provisional = entry.provisionalCopy();
+      for (final refetch in refetched) {
+        provisional.absorb(refetch.legs);
+      }
+      return provisional;
     } else if (cameOnline.isNotEmpty) {
       unawaited(_refetchLegs(key, entry, cameOnline));
     }
@@ -184,14 +231,17 @@ class CopyResolver {
 
   /// One lookup per [key] at a time: concurrent reads share it. Its answer
   /// goes to them either way, but is cached only if no library change
-  /// arrived meanwhile for a server it asked.
+  /// arrived meanwhile for a server it asked, and it wasn't built on a
+  /// provisional answer.
   Future<_Entry> _load(String key, Future<_Entry> Function() lookUp) {
     final pending = _loading[key];
     if (pending != null) return pending;
     _entries.removeWhere((_, entry) => _isExpired(entry));
     final changesBefore = Map.of(_changes);
     final future = lookUp().then((entry) {
-      if (!_disposed && !_changedSince(changesBefore, entry.scopes.keys)) _entries[key] = entry;
+      if (!_disposed && !entry.provisional && !_changedSince(changesBefore, entry.scopes.keys)) {
+        _entries[key] = entry;
+      }
       return entry;
     });
     _loading[key] = future;
@@ -202,22 +252,30 @@ class CopyResolver {
   }
 
   /// Re-asks [serverIds] for [entry] and folds the answers in, if [entry] is
-  /// still the one cached under [key] and no library change arrived meanwhile
-  /// for those servers (the next read asks again). A server already being
-  /// re-asked is not asked twice.
-  Future<void> _refetchLegs(String key, _Entry entry, Set<String> serverIds) {
+  /// still the one cached under [key], no library change arrived meanwhile
+  /// for those servers, and the answer isn't provisional (the next read asks
+  /// again). A server already being re-asked is not asked twice. Resolves to
+  /// every answer for [serverIds], folded in or not; a failed re-ask has
+  /// none and leaves its servers unasked.
+  Future<List<_Refetch>> _refetchLegs(String key, _Entry entry, Set<String> serverIds) async {
     final start = serverIds.difference(entry.refetching.keys.toSet());
     if (start.isNotEmpty) {
       final changesBefore = Map.of(_changes);
       final future = entry
           .lookUpLegs(start)
-          .then(
+          .then<_Refetch?>(
             (legs) {
-              if (_disposed || !identical(_entries[key], entry)) return;
-              if (!_changedSince(changesBefore, legs.scopes.keys)) entry.absorb(legs);
+              final kept =
+                  !_disposed &&
+                  identical(_entries[key], entry) &&
+                  !legs.provisional &&
+                  !_changedSince(changesBefore, legs.scopes.keys);
+              if (kept) entry.absorb(legs);
+              return (legs: legs, kept: kept);
             },
             onError: (Object error, StackTrace stackTrace) {
               appLogger.w('Copy lookup refetch failed for $key on $start', error: error, stackTrace: stackTrace);
+              return null;
             },
           );
       for (final serverId in start) {
@@ -229,7 +287,10 @@ class CopyResolver {
         }
       }).ignore();
     }
-    return Future.wait({for (final serverId in serverIds) entry.refetching[serverId] ?? Future<void>.value()});
+    final refetches = await Future.wait({
+      for (final serverId in serverIds) entry.refetching[serverId] ?? Future<_Refetch?>.value(),
+    });
+    return refetches.nonNulls.toList();
   }
 
   bool _isExpired(_Entry entry) => _now().difference(entry.fetchedAt) > copyLookupTtl;
@@ -282,13 +343,9 @@ class CopyResolver {
 
   /// [run] under the per-server lookup deadline, and abandoned at once on
   /// [dispose] even when the backend call it makes takes no abort.
-  Future<T> _bounded<T>(String operation, Future<T> Function(AbortController abort) run) {
-    _lifetime.throwIfAborted();
-    return _waitUnless(
-      _lifetime,
-      withinServerDeadline(MediaServerTimeouts.libraryLookup, operation: operation, parent: _lifetime, run: run),
-    );
-  }
+  Future<T> _bounded<T>(String operation, Future<T> Function(AbortController abort) run) => _scoped(
+    (abort) => withinServerDeadline(MediaServerTimeouts.libraryLookup, operation: operation, parent: abort, run: run),
+  );
 
   /// [itemId]'s catalogue IDs from [serverId], or none when that server is
   /// offline or can't say. Throws only when [dispose] abandoned it.
@@ -298,7 +355,7 @@ class CopyResolver {
     try {
       return await _bounded('External IDs of $serverId:$itemId', (_) => client.fetchExternalIds(itemId));
     } catch (error, stackTrace) {
-      if (_lifetime.isAborted) rethrow;
+      if (_disposed) rethrow;
       appLogger.w('Could not read external IDs of $serverId:$itemId', error: error, stackTrace: stackTrace);
       return const ExternalIds();
     }
@@ -338,9 +395,12 @@ class CopyResolver {
     Future<_Legs> lookUpLegs(Set<String> serverIds) async {
       final clients = _clientsIn(serverIds);
       final scopes = {for (final entry in clients.entries) entry.key: _Scope(entry.value)};
-      final result = kind == MediaKind.show
-          ? await _aggregation.findShowCopiesAcrossServers(query, abort: _lifetime, serverIds: clients.keys.toSet())
-          : await _aggregation.findTitleCopiesAcrossServers(query, abort: _lifetime, serverIds: clients.keys.toSet());
+      final asked = clients.keys.toSet();
+      final result = await _scoped(
+        (abort) => kind == MediaKind.show
+            ? _aggregation.findShowCopiesAcrossServers(query, abort: abort, serverIds: asked)
+            : _aggregation.findTitleCopiesAcrossServers(query, abort: abort, serverIds: asked),
+      );
       return _Legs(
         scopes: scopes,
         copies: result.items,
@@ -368,11 +428,20 @@ class CopyResolver {
       final shows = await show();
       final ownIds = await ownIdsRead;
       final clients = _clientsIn(serverIds);
+      final scopes = <String, _Scope>{};
       final failed = <String>{};
       final cancelled = <String>{};
       final unqueried = <String>{};
       final copies = <MediaItem>[];
       Future<void> askServer(String serverId, MediaServerClient client) async {
+        // No show leg for this server (its show re-ask failed, or wasn't
+        // kept and this read didn't get it): nothing is known, so it isn't
+        // recorded as asked, and the next read asks again.
+        if (!shows.scopes.containsKey(serverId)) {
+          unqueried.add(serverId);
+          return;
+        }
+        scopes[serverId] = _Scope(client);
         // The show leg's outcome is the episode leg's: no show, no episode.
         for (final (shown, into) in [
           (shows.failed, failed),
@@ -393,7 +462,7 @@ class CopyResolver {
             ),
           );
         } catch (error, stackTrace) {
-          if (_lifetime.isAborted) rethrow;
+          if (_disposed) rethrow;
           if (isClientCancellation(error)) {
             cancelled.add(serverId);
             appLogger.d('Cancelled: episode copy lookup on $serverId');
@@ -406,12 +475,13 @@ class CopyResolver {
 
       await Future.wait([for (final entry in clients.entries) askServer(entry.key, entry.value)]);
       return _Legs(
-        scopes: {for (final entry in clients.entries) entry.key: _Scope(entry.value)},
+        scopes: scopes,
         copies: copies,
         failed: failed,
         cancelled: cancelled,
         unqueried: unqueried,
         aliases: shows.aliases,
+        provisional: shows.provisional,
         ownShow: shows.copiesByServer[episode.serverId]?.where((copy) => copy.globalKey == showKey).firstOrNull,
       );
     }
@@ -526,9 +596,11 @@ class _Legs {
     required this.unqueried,
     required this.aliases,
     this.ownShow,
+    this.provisional = false,
   });
 
-  /// Every server asked, with the session it was asked under.
+  /// Every server asked, with the session it was asked under. A server in
+  /// [unqueried] but not here was not asked at all.
   final Map<String, _Scope> scopes;
   final List<MediaItem> copies;
   final Set<String> failed;
@@ -538,11 +610,18 @@ class _Legs {
 
   /// For an episode, the show copy it was opened from.
   final MediaItem? ownShow;
+
+  /// Built on a show answer that was not cached ([_Entry.provisional]), so
+  /// this answer is not cached either.
+  final bool provisional;
 }
+
+/// A leg re-ask's answer, and whether it was folded into the cached entry.
+typedef _Refetch = ({_Legs legs, bool kept});
 
 /// One cached lookup: its copies and accounting per server asked.
 class _Entry {
-  _Entry({required this.fetchedAt, required this.lookUpLegs, this.showKey});
+  _Entry({required this.fetchedAt, required this.lookUpLegs, this.showKey, this.provisional = false});
 
   final DateTime fetchedAt;
 
@@ -552,6 +631,11 @@ class _Entry {
   /// For an episode, the show entry its copies came through.
   final String? showKey;
 
+  /// Holds an answer that is handed to the read that waited for it but never
+  /// cached: a re-ask that overlapped a library change, or one built on such
+  /// an answer.
+  bool provisional;
+
   MediaItem? ownShow;
   final Map<String, List<MediaItem>> copiesByServer = {};
   final Map<String, _Scope> scopes = {};
@@ -559,10 +643,27 @@ class _Entry {
   final Set<String> cancelled = {};
   final Set<String> unqueried = {};
   final Set<String> aliases = {};
-  final Map<String, Future<void>> refetching = {};
+  final Map<String, Future<_Refetch?>> refetching = {};
+
+  /// An uncached copy of this entry, for folding in an answer that was not
+  /// kept.
+  _Entry provisionalCopy() {
+    final copy = _Entry(fetchedAt: fetchedAt, lookUpLegs: lookUpLegs, showKey: showKey, provisional: true)
+      ..ownShow = ownShow;
+    for (final MapEntry(:key, :value) in copiesByServer.entries) {
+      copy.copiesByServer[key] = List.of(value);
+    }
+    copy.scopes.addAll(scopes);
+    copy.failed.addAll(failed);
+    copy.cancelled.addAll(cancelled);
+    copy.unqueried.addAll(unqueried);
+    copy.aliases.addAll(aliases);
+    return copy;
+  }
 
   /// Replaces what the servers [legs] asked had said with what they say now.
   void absorb(_Legs legs) {
+    provisional = provisional || legs.provisional;
     for (final serverId in legs.scopes.keys) {
       copiesByServer.remove(serverId);
       failed.remove(serverId);
