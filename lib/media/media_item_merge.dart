@@ -67,6 +67,42 @@ int compareLibraryCopies(MediaItem a, MediaItem b) {
   return a.globalKey.compareTo(b.globalKey);
 }
 
+/// Order the library copies of one title by a user-ranked [priority] list of
+/// library global keys (`serverId:libraryId`), best first.
+///
+/// A copy in a ranked library sorts by its index in [priority], and any ranked
+/// copy beats any unranked one. Unranked copies, including those with no
+/// [MediaItem.libraryId], order by best resolution, highest first. Ties fall
+/// through to [compareLibraryCopies], so the order stays total and stable
+/// across passes. Entries naming a library no copy belongs to are inert.
+Comparator<MediaItem> compareCopiesByPriority(List<String> priority) {
+  final rank = <String, int>{};
+  for (var i = 0; i < priority.length; i++) {
+    rank.putIfAbsent(priority[i], () => i);
+  }
+  int? rankOf(MediaItem item) {
+    final key = item.libraryGlobalKey;
+    return key == null ? null : rank[key];
+  }
+
+  return (a, b) {
+    final rankA = rankOf(a);
+    final rankB = rankOf(b);
+    if (rankA != null && rankB != null) {
+      final byRank = rankA.compareTo(rankB);
+      if (byRank != 0) return byRank;
+    } else if (rankA != null) {
+      return -1;
+    } else if (rankB != null) {
+      return 1;
+    } else {
+      final byResolution = _bestResolutionHeight(b).compareTo(_bestResolutionHeight(a));
+      if (byResolution != 0) return byResolution;
+    }
+    return compareLibraryCopies(a, b);
+  };
+}
+
 /// Fold a re-resolved copy into the one already known for its
 /// [MediaItem.globalKey].
 ///
@@ -103,18 +139,22 @@ MediaItem mergeLibraryCopy(MediaItem existing, MediaItem addition) {
 }
 
 /// Union [additions] into [current] by [MediaItem.globalKey], then re-sort
-/// with [compareLibraryCopies]. A key on both sides is folded by
+/// with [compare], [compareLibraryCopies] by default. A key on both sides is folded by
 /// [mergeLibraryCopy].
 ///
 /// Never removes a copy, and never downgrades one. The cross-server fan-out
 /// behind these lists logs and skips per-server failures, so a later pass can
 /// legitimately come back short a server, or short the best-effort library
 /// stamp of a copy it did return.
-List<MediaItem> mergeLibraryCopies(Iterable<MediaItem> current, Iterable<MediaItem> additions) {
+List<MediaItem> mergeLibraryCopies(
+  Iterable<MediaItem> current,
+  Iterable<MediaItem> additions, {
+  Comparator<MediaItem> compare = compareLibraryCopies,
+}) {
   final byKey = <String, MediaItem>{for (final item in current) item.globalKey: item};
   for (final item in additions) {
     final existing = byKey[item.globalKey];
     byKey[item.globalKey] = existing == null ? item : mergeLibraryCopy(existing, item);
   }
-  return byKey.values.toList()..sort(compareLibraryCopies);
+  return byKey.values.toList()..sort(compare);
 }

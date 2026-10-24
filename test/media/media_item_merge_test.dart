@@ -146,4 +146,84 @@ void main() {
 
     expect(merged.single.mediaVersions?.single.videoResolution, '1080');
   });
+
+  group('compareCopiesByPriority', () {
+    MediaItem ranked(String id, String serverId, String? libraryId, {int? height}) => testMediaItem(
+      id: id,
+      serverId: serverId,
+      serverName: serverId,
+      libraryId: libraryId,
+      mediaVersions: height == null ? null : [MediaVersion(id: '$id-v', height: height)],
+    );
+
+    List<String> order(List<MediaItem> items, Comparator<MediaItem> cmp) =>
+        ([...items]..sort(cmp)).map((i) => i.id).toList();
+
+    test('ranked libraries order by list index', () {
+      final cmp = compareCopiesByPriority(['silo:remux', 'silo:4k', 'plex:movies']);
+      final plexMovies = ranked('a', 'plex', 'movies', height: 1080);
+      final silo4k = ranked('b', 'silo', '4k', height: 2160);
+      final siloRemux = ranked('c', 'silo', 'remux', height: 2160);
+
+      expect(order([plexMovies, silo4k, siloRemux], cmp), ['c', 'b', 'a']);
+    });
+
+    test('any ranked copy beats any unranked copy', () {
+      final cmp = compareCopiesByPriority(['plex:movies']);
+      final rankedLow = ranked('low', 'plex', 'movies', height: 720);
+      final unrankedHigh = ranked('high', 'silo', 'other', height: 2160);
+
+      expect(order([unrankedHigh, rankedLow], cmp), ['low', 'high']);
+      expect(order([rankedLow, unrankedHigh], cmp), ['low', 'high']);
+    });
+
+    test('unranked copies order by best resolution', () {
+      final cmp = compareCopiesByPriority(['plex:movies']);
+      final sd = ranked('sd', 'silo', 'x', height: 480);
+      final uhd = ranked('uhd', 'silo', 'y', height: 2160);
+      final none = ranked('none', 'silo', 'z');
+
+      expect(order([none, sd, uhd], cmp), ['uhd', 'sd', 'none']);
+    });
+
+    test('copy without libraryId is unranked', () {
+      final cmp = compareCopiesByPriority(['plex:movies']);
+      final rankedCopy = ranked('r', 'plex', 'movies', height: 480);
+      final unstamped = ranked('u', 'plex', null, height: 2160);
+
+      expect(order([unstamped, rankedCopy], cmp), ['r', 'u']);
+    });
+
+    test('ties fall through to compareLibraryCopies and are total', () {
+      final cmp = compareCopiesByPriority(const []);
+      final items = [
+        ranked('c', 'silo', 'x', height: 1080),
+        ranked('a', 'silo', 'x', height: 1080),
+        ranked('b', 'silo', 'x', height: 1080),
+      ];
+
+      final first = order(items, cmp);
+      expect(first, ['a', 'b', 'c']);
+      expect(order(items.reversed.toList(), cmp), first);
+      expect(order(items, cmp), first);
+      expect(cmp(items[0], items[0]), 0);
+    });
+
+    test('a priority entry naming no present library is ignored', () {
+      final cmp = compareCopiesByPriority(['gone:1', 'silo:4k']);
+      final silo4k = ranked('k', 'silo', '4k', height: 480);
+      final other = ranked('o', 'plex', 'movies', height: 2160);
+
+      expect(order([other, silo4k], cmp), ['k', 'o']);
+    });
+  });
+
+  test('mergeLibraryCopies uses the supplied comparator', () {
+    final low = copy(id: 'a-low', libraryTitle: 'A', videoResolution: '480');
+    final high = copy(id: 'b-high', libraryTitle: 'B', videoResolution: '4k');
+
+    expect(mergeLibraryCopies([low], [high]).map((i) => i.id), ['b-high', 'a-low']);
+    final merged = mergeLibraryCopies([low], [high], compare: (a, b) => a.id.compareTo(b.id));
+    expect(merged.map((i) => i.id), ['a-low', 'b-high']);
+  });
 }
