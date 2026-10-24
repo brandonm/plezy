@@ -761,7 +761,12 @@
     "mediaFailedToDelete": "Failed to delete media item",
     "rate": "Rate",
     "playFromBeginning": "Play from Beginning",
-    "playVersion": "Play Version..."
+    "playVersion": "Play Version...",
+    "playOn": "Play · $target",
+    "usePriorityOrder": "Use priority order"
+  },
+  "mediaDetail": {
+    "alsoIn": "Also in"
   },
   "rateSheet": {
     "title": "Rate",

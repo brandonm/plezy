@@ -53,6 +53,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$hotkeys$en hotkeys = Translations$hotkeys$en.internal(_root);
 	late final Translations$fileInfo$en fileInfo = Translations$fileInfo$en.internal(_root);
 	late final Translations$mediaMenu$en mediaMenu = Translations$mediaMenu$en.internal(_root);
+	late final Translations$mediaDetail$en mediaDetail = Translations$mediaDetail$en.internal(_root);
 	late final Translations$rateSheet$en rateSheet = Translations$rateSheet$en.internal(_root);
 	late final Translations$accessibility$en accessibility = Translations$accessibility$en.internal(_root);
 	late final Translations$tooltips$en tooltips = Translations$tooltips$en.internal(_root);
@@ -2103,6 +2104,24 @@ class Translations$mediaMenu$en {
 
 	/// en: 'Play Version...'
 	String get playVersion => 'Play Version...';
+
+	/// en: 'Play · $target'
+	String playOn({required Object target}) => 'Play · ${target}';
+
+	/// en: 'Use priority order'
+	String get usePriorityOrder => 'Use priority order';
+}
+
+// Path: mediaDetail
+class Translations$mediaDetail$en {
+	Translations$mediaDetail$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Also in'
+	String get alsoIn => 'Also in';
 }
 
 // Path: rateSheet
@@ -8745,6 +8764,9 @@ extension on Translations {
 			'mediaMenu.rate' => 'Rate',
 			'mediaMenu.playFromBeginning' => 'Play from Beginning',
 			'mediaMenu.playVersion' => 'Play Version...',
+			'mediaMenu.playOn' => ({required Object target}) => 'Play · ${target}',
+			'mediaMenu.usePriorityOrder' => 'Use priority order',
+			'mediaDetail.alsoIn' => 'Also in',
 			'rateSheet.title' => 'Rate',
 			'rateSheet.server' => 'Server',
 			'rateSheet.favorite' => 'Favorite',
@@ -9051,11 +9073,11 @@ extension on Translations {
 			'profiles.pinExplain' => '4-digit PIN required to switch profiles.',
 			'profiles.continueButton' => 'Continue',
 			'profiles.pinsDontMatch' => 'PINs don\'t match',
+			_ => null,
+		} ?? switch (path) {
 			'profiles.tokenIdentityMismatch' => 'The Plex profile token resolved to an unexpected server',
 			'connections.sectionTitle' => 'Connections',
 			'connections.addConnection' => 'Add connection',
-			_ => null,
-		} ?? switch (path) {
 			'connections.addConnectionSubtitleNoProfile' => 'Sign in with Plex or connect a Jellyfin or Emby server',
 			'connections.addConnectionSubtitleScoped' => ({required Object displayName}) => 'Add to ${displayName}: Plex, Jellyfin, Emby, or another profile connection',
 			'connections.sessionExpiredOne' => ({required Object name}) => 'Session expired for ${name}',
@@ -9565,11 +9587,11 @@ extension on Translations {
 			'liveTv.recordSettings.anyChannel' => 'Record on any channel',
 			'liveTv.recordSettings.anyTime' => 'Record at any time',
 			'liveTv.recordSettings.skipInLibrary' => 'Skip episodes already in the library',
+			_ => null,
+		} ?? switch (path) {
 			'liveTv.recordSettings.keepUpTo' => 'Episodes to keep',
 			'liveTv.recordSettings.keepUpToHint' => '0 keeps every episode',
 			'liveTv.startingInMinutes' => ({required Object minutes}) => 'Starting in ${minutes} min',
-			_ => null,
-		} ?? switch (path) {
 			'liveTv.dayAtTime' => ({required Object day, required Object time}) => '${day} at ${time}',
 			'liveTv.invalidPlaybackData' => ({required Object product}) => '${product} returned invalid Live TV playback data',
 			'liveTv.failedToStartChannel' => 'Could not start the live channel',
@@ -10079,11 +10101,11 @@ extension on Translations {
 			'performanceOverlay.decoderNvidiaHw' => 'NVIDIA HW',
 			'performanceOverlay.decoderQualcommHw' => 'Qualcomm HW',
 			'performanceOverlay.decoderMediatekHw' => 'MediaTek HW',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.decoderExynosHw' => 'Exynos HW',
 			'performanceOverlay.decoderSoftware' => 'Software',
 			'performanceOverlay.decoderHardware' => 'Hardware',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.tunnelingActive' => 'Active',
 			'performanceOverlay.dvRpuFailed' => ({required Object converted, required Object failures}) => '${converted} (${failures} failed)',
 			'externalPlayer.title' => 'External Player',

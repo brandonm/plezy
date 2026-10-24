@@ -31,6 +31,7 @@ import '../media/library_change_event.dart';
 import '../media/media_hub.dart';
 import '../utils/provider_extensions.dart';
 import '../utils/plex_season_display.dart';
+import '../media/copy_selection.dart';
 import '../media/media_item.dart';
 import '../media/episode_collection.dart';
 import '../media/media_item_types.dart';
@@ -61,11 +62,14 @@ import '../services/watch_actions.dart';
 import '../widgets/settings_builder.dart';
 import '../utils/layout_constants.dart';
 import '../providers/catalog_sources_provider.dart';
+import '../providers/copy_priority_provider.dart';
 import '../providers/download_provider.dart';
 import '../providers/multi_server_provider.dart';
 import '../providers/offline_watch_provider.dart';
 import '../providers/watch_state_store.dart';
 import '../services/catalog/catalog_source.dart';
+import '../services/copy_pick_store.dart';
+import '../services/copy_resolver.dart';
 import '../services/catalog/community_ratings.dart';
 import '../services/catalog/library_watchlist_candidates.dart';
 import '../utils/app_logger.dart';
@@ -73,10 +77,12 @@ import '../utils/formatters.dart';
 import '../utils/scroll_utils.dart';
 import '../utils/dialogs.dart';
 import '../utils/snackbar_helper.dart';
+import '../utils/media_server_http_client.dart';
 import '../utils/video_player_navigation.dart';
 import '../widgets/app_bar_back_button.dart';
 import '../utils/desktop_window_padding.dart';
 import '../widgets/horizontal_scroll_with_arrows.dart';
+import '../widgets/copy_version_picker.dart';
 import '../widgets/media_context_menu.dart';
 import '../widgets/watchlist_source_chooser.dart';
 import 'libraries/state_messages.dart';
@@ -106,6 +112,7 @@ import '../services/playback_track_preview.dart';
 import '../utils/error_message_utils.dart';
 
 part 'media_detail/action_buttons.dart';
+part 'media_detail/copy_targets.dart';
 part 'media_detail/playback_tracks_status.dart';
 
 /// Ceiling for the detail hero's backdrop box, as a fraction of the window
@@ -402,6 +409,21 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   final ValueNotifier<MediaItem?> _tvDetailFocusedEpisode = ValueNotifier(null);
   bool _tvDetailActionRowHasFocus = false;
 
+  // Copies of the playback target across servers (see copy_targets.dart).
+  // A notifier, like the focused episode, so an answer rebuilds only the
+  // action row.
+  final ValueNotifier<_TargetCopies?> _targetCopies = ValueNotifier(null);
+  String? _copiesTargetKey;
+  int _copyGeneration = 0;
+  AbortController? _copiesAbort;
+  Timer? _copiesTimer;
+
+  // A show's other copies, for the "Also in" row.
+  final ValueNotifier<List<MediaItem>> _alsoInCopies = ValueNotifier(const []);
+  AbortController? _alsoInAbort;
+  final FocusNode _alsoInFocusNode = FocusNode(debugLabel: 'also_in');
+  final _alsoInSectionKey = GlobalKey();
+
   // Full item snapshots are reusable across preference changes; resolved
   // sources are not. A generation retires probes after refresh or selection.
   final Map<String, MediaItem> _probedPlaybackItems = {};
@@ -423,6 +445,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   late final Listenable _tvDetailForegroundListenable = Listenable.merge([
     _tvDetailFocusedEpisode,
     _focusedEpisodeRatingsRevision,
+    _alsoInCopies,
   ]);
 
   // Watchlist action (external catalog sources: Trakt, MAL). External ids
@@ -895,6 +918,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     unawaited(_listenForPlaybackVersionChanges());
     _initWatchlistState();
     _initCommunityRatings();
+    _initAlsoIn();
   }
 
   /// Ask the connected trackers for this title's scores. They resolve the
@@ -1159,6 +1183,13 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     _lastEpisodeFocusNode.removeListener(_onLastEpisodeFocusChanged);
     _lastEpisodeFocusNode.dispose();
     _initialEpisodeFocusNode.dispose();
+    _copyGeneration++;
+    _copiesTimer?.cancel();
+    _copiesAbort?.abort();
+    _alsoInAbort?.abort();
+    _targetCopies.dispose();
+    _alsoInCopies.dispose();
+    _alsoInFocusNode.dispose();
     super.dispose();
   }
 
@@ -2367,8 +2398,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
       _overviewFocusNode.requestFocus();
       _scrollSectionIntoView(_overviewSectionKey);
     } else {
-      _scrollController.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-      _playButtonFocusNode.requestFocus();
+      _focusContentTop();
     }
   }
 
@@ -2501,23 +2531,36 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   /// Focus the first available section above the primary action row.
   void _focusAboveActionRow() {
     if (PlatformDetector.isTV()) {
-      // The hero information block sits directly above the action row and is
-      // the D-pad path to the full details sheet (#2042).
-      _tvDetailInfoFocusNode.requestFocus();
+      // The "Also in" row, when the show has other copies, then the hero
+      // information block: the D-pad path to the full details sheet (#2042).
+      if (!_focusAlsoInRow()) _tvDetailInfoFocusNode.requestFocus();
       return;
     }
     if (!widget.isOffline) _ratingChipFocusNode.requestFocus();
   }
 
-  /// Focus the overview, or the first available content section when there is no overview.
+  /// Focus the "Also in" row, else the overview, else the first available
+  /// content section.
   void _focusBelowActionRow() {
-    final metadata = _metadata;
-
     if (PlatformDetector.isTV()) {
       _tvDetailRailKey.currentState?.requestFocus();
       return;
     }
+    if (_focusAlsoInRow()) return;
+    _focusOverviewOrBelow();
+  }
 
+  /// The top of the content below the hero, from the section under it: the
+  /// "Also in" row, else Play.
+  void _focusContentTop() {
+    if (_focusAlsoInRow()) return;
+    _scrollController.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+    _playButtonFocusNode.requestFocus();
+  }
+
+  /// Focus the overview, or the first available content section when there is no overview.
+  void _focusOverviewOrBelow() {
+    final metadata = _metadata;
     if (metadata.summary != null && metadata.summary!.isNotEmpty) {
       _overviewFocusNode.requestFocus();
       _scrollSectionIntoView(_overviewSectionKey);
@@ -2956,8 +2999,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                     _overviewFocusNode.requestFocus();
                     _scrollSectionIntoView(_overviewSectionKey);
                   } else {
-                    _scrollController.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-                    _playButtonFocusNode.requestFocus();
+                    _focusContentTop();
                   }
                 }
               : null,
@@ -3561,6 +3603,32 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                           child: Column(
                             crossAxisAlignment: .start,
                             children: [
+                              // The show's other copies, right under the hero.
+                              if (!isTv && isShow)
+                                ValueListenableBuilder<List<MediaItem>>(
+                                  valueListenable: _alsoInCopies,
+                                  builder: (context, alsoIn, _) => alsoIn.isEmpty
+                                      ? const SizedBox.shrink()
+                                      : Padding(
+                                          padding: const EdgeInsets.only(bottom: 12),
+                                          child: _buildAlsoInRow(
+                                            context,
+                                            alsoIn,
+                                            isTv: false,
+                                            scale: 1,
+                                            onNavigateUp: () {
+                                              _scrollController.animateTo(
+                                                0,
+                                                duration: const Duration(milliseconds: 200),
+                                                curve: Curves.easeOut,
+                                              );
+                                              _playButtonFocusNode.requestFocus();
+                                            },
+                                            onNavigateDown: _focusOverviewOrBelow,
+                                          ),
+                                        ),
+                                ),
+
                               // Summary
                               if (!isTv && metadata.summary != null && metadata.summary!.isNotEmpty) ...[
                                 Text(key: _overviewSectionKey, t.discover.overview, style: sectionTitleStyle),
@@ -3571,14 +3639,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                                   style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
                                   focusNode: _overviewFocusNode,
                                   skipTraversal: false,
-                                  onNavigateUp: () {
-                                    _scrollController.animateTo(
-                                      0,
-                                      duration: const Duration(milliseconds: 200),
-                                      curve: Curves.easeOut,
-                                    );
-                                    _playButtonFocusNode.requestFocus();
-                                  },
+                                  onNavigateUp: _focusContentTop,
                                   onNavigateDown: _focusBelowOverview,
                                   onNavigateLeft: () {},
                                   onNavigateRight: () {},
@@ -3927,6 +3988,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         final hasDescription = description != null && description.isNotEmpty;
         final hasEpisodeTitle = episodeTitle != null && episodeTitle.isNotEmpty;
         final episodeTitleBlockHeight = hasEpisodeTitle ? episodeTitleLineHeight + episodeTitleGap : 0.0;
+        // The show's other copies sit between the information and the actions.
+        final alsoIn = _alsoInCopies.value;
+        final alsoInRowHeight = 36 * scale;
+        final alsoInGap = 12 * scale;
+        final alsoInBlockHeight = alsoIn.isEmpty ? 0.0 : alsoInGap + alsoInRowHeight;
         // Genres belong to the show, not the focused episode, and do not change
         // while browsing; they live in the details sheet (#2217).
         final genres = metadata.genres ?? const <String>[];
@@ -3940,6 +4006,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
               episodeTitleBlockHeight +
               metadataLineHeight +
               descriptionHeight +
+              alsoInBlockHeight +
               actionGap +
               actionHeight;
           final remainingForLogo = availableHeight - reservedHeight;
@@ -3957,6 +4024,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
             episodeTitleBlockHeight +
             metadataLineHeight +
             descriptionHeight +
+            alsoInBlockHeight +
             actionGap +
             actionHeight;
         final logoWidth = desiredLogoWidth < constraints.maxWidth ? desiredLogoWidth : constraints.maxWidth;
@@ -4016,7 +4084,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                               focusNode: _tvDetailInfoFocusNode,
                               onSelect: openDetails,
                               onNavigateUp: _backButtonFocusNode.requestFocus,
-                              onNavigateDown: _focusTvDetailActionRow,
+                              onNavigateDown: () {
+                                if (!_focusAlsoInRow()) _focusTvDetailActionRow();
+                              },
                               onBack: _popMediaDetailIfBackNotSuppressed,
                               useBackgroundFocus: true,
                               disableScale: true,
@@ -4082,6 +4152,21 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
                         ),
                       ),
                     ),
+                    if (alsoIn.isNotEmpty) ...[
+                      SizedBox(height: alsoInGap),
+                      SizedBox(
+                        height: alsoInRowHeight,
+                        child: _buildAlsoInRow(
+                          context,
+                          alsoIn,
+                          isTv: true,
+                          scale: scale,
+                          onNavigateUp: _tvDetailInfoFocusNode.requestFocus,
+                          onNavigateDown: _focusTvDetailActionRow,
+                          labelColor: mutedForegroundColor,
+                        ),
+                      ),
+                    ],
                     SizedBox(height: actionGap),
                     SizedBox(height: actionHeight, child: _buildActionButtons(metadata)),
                   ],
@@ -5072,7 +5157,9 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   /// with nothing focused (and everywhere off TV) it is the on-deck episode.
   MediaItem? _showPlayEpisode() => _tvDetailFocusedEpisode.value ?? _onDeckEpisode;
 
-  String _getPlayButtonLabel(MediaItem metadata) {
+  /// [copyTarget] names the copy Play starts when it is worth saying
+  /// ([_copyTargetLabel]).
+  String _getPlayButtonLabel(MediaItem metadata, {String? copyTarget}) {
     // For TV shows - use compact S1E1 format
     if (metadata.isShow) {
       final episode = _showPlayEpisode();
@@ -5082,15 +5169,16 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
 
         // Use the same format for both play and resume
         // (icon will indicate the difference)
-        return t.discover.playEpisode(season: seasonNum.toString(), episode: episodeNum.toString());
+        final label = t.discover.playEpisode(season: seasonNum.toString(), episode: episodeNum.toString());
+        return copyTarget == null ? label : '$label · $copyTarget';
       } else {
         final seasonNum = defaultPlaybackSeason(_seasons)?.index ?? 1;
         return t.discover.playEpisode(season: seasonNum.toString(), episode: '1');
       }
     }
 
-    // For movies or episodes - NO TEXT, just icon
-    return '';
+    // For movies or episodes - NO TEXT, just icon, until the copy is known
+    return copyTarget == null ? '' : t.mediaMenu.playOn(target: copyTarget);
   }
 
   IconData _getPlayButtonIcon(MediaItem metadata) {

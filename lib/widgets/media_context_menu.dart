@@ -14,6 +14,7 @@ import '../media/media_playlist.dart';
 import '../media/media_server_client.dart';
 import '../metadata_edit/metadata_edit_adapters.dart';
 import '../metadata_edit/metadata_edit_models.dart';
+import '../services/copy_resolver.dart';
 import '../services/plex_client.dart';
 import '../services/media_list_playback_launcher.dart';
 import '../services/music/music_playback_service.dart';
@@ -44,6 +45,7 @@ import '../utils/dialogs.dart';
 import '../utils/downloads_folder_actions.dart';
 import '../services/external_player_service.dart';
 import 'collection_picker_dialog.dart';
+import 'copy_version_picker.dart';
 import '../screens/plex_match_screen.dart';
 import '../screens/media_detail_screen.dart';
 import '../screens/metadata_edit_screen.dart';
@@ -735,8 +737,13 @@ class MediaContextMenuState extends State<MediaContextMenu> {
     // already targets it, so the picker would be a no-op detour
     // offering versions that can't play (issue #1440).
     final hasVersionChoice = (mediaItem.mediaVersions ?? const []).length > 1;
+    // Copies on other servers are a choice too, whatever this server's state;
+    // only an answer the lookup already holds counts, so opening the menu
+    // starts no lookup.
+    final copies = isMovieOrEpisode ? context.read<CopyResolver?>()?.peek(mediaItem) : null;
+    final hasCopyChoice = copies != null && !isOpenedAlone(copies, mediaItem) && copyVersionCount(copies) > 1;
     return [
-      if (isMovieOrEpisode && (hasVersionChoice || menu.canTranscode) && menu.itemServerOnline)
+      if (isMovieOrEpisode && (((hasVersionChoice || menu.canTranscode) && menu.itemServerOnline) || hasCopyChoice))
         _MenuAction(value: 'play_version', icon: Symbols.video_file_rounded, label: t.mediaMenu.playVersion),
       // File Info — every file-backed leaf kind (movies, episodes, tracks,
       // clips). Backend-neutral: both PlexClient and JellyfinClient implement
@@ -930,7 +937,7 @@ class MediaContextMenuState extends State<MediaContextMenu> {
         await _handleShufflePlayWithQueue(context);
         break;
       case 'play_version':
-        outcome.didNavigate = await promptAndPlayVersion(context, _mediaItem!);
+        outcome.didNavigate = await promptAndPlayCopyVersion(context, _mediaItem!);
         break;
       case 'fileinfo':
         await _showFileInfo(context);

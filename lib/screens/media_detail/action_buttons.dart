@@ -17,36 +17,41 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
   Widget _buildActionButtons(MediaItem metadata) {
     // Tie asynchronous playback prompts to the actionable subtree, not the
     // route's State: a deleted first-route detail intentionally stays mounted.
-    return Builder(builder: (context) => _buildAvailableActionButtons(context, metadata));
+    // Rebuilt when the playback target's copies arrive.
+    return ValueListenableBuilder<_TargetCopies?>(
+      valueListenable: _targetCopies,
+      builder: (context, _, _) => _buildAvailableActionButtons(context, metadata),
+    );
   }
 
   Widget _buildAvailableActionButtons(BuildContext context, MediaItem metadata) {
     final isTv = PlatformDetector.isTV();
     final tvScale = TvLayoutConstants.scaleOf(context);
     final actionSize = isTv ? _tvDetailActionSize * tvScale : 48.0;
-    final playButtonLabel = _getPlayButtonLabel(metadata);
+    // What Play and Play Version start: the movie, or a show's hero episode.
+    final playbackTarget = _playbackTargetItem(metadata);
+    final targetCopies = _copiesForTarget(playbackTarget);
+    final copyTarget = _copyTargetLabel(playbackTarget, targetCopies);
+    final playButtonLabel = _getPlayButtonLabel(metadata, copyTarget: copyTarget);
     final playIcon = _getPlayButtonIcon(metadata);
     final playActionLabel = playIcon == Symbols.resume_rounded ? t.common.resume : t.common.play;
-    final playSemanticsLabel = playButtonLabel.isEmpty ? playActionLabel : '$playActionLabel $playButtonLabel';
+    // A movie's copy label already starts with "Play".
+    final playSemanticsLabel = playButtonLabel.isEmpty
+        ? playActionLabel
+        : metadata.isShow || copyTarget == null
+        ? '$playActionLabel $playButtonLabel'
+        : playButtonLabel;
     final playIconSize = isTv ? 22 * tvScale : 20.0;
     final playTextStyle = TextStyle(fontSize: isTv ? 17 * tvScale : 16, fontWeight: .w700);
     final playButtonIcon = AppIcon(playIcon, fill: 1, size: playIconSize);
 
     // Split "Play Version" segment (#1881): a visible second Play segment
     // that surfaces multiple versions without opening the ⋮ menu. Only when
-    // the item itself carries a real choice — a movie/episode with more than
-    // one inline version — and its server is reachable (offline playback and
-    // unreachable servers have at most one playable version, so the picker
-    // would offer versions that can't play; see #1440). Transcode-only
-    // quality picking deliberately stays in the ⋮ menu: a chevron on every
-    // item would stop signaling "multiple versions exist".
-    final itemServerId = serverIdOrNull(metadata.serverId);
-    final showVersionSplit =
-        !widget.isOffline &&
-        (metadata.isMovie || metadata.isEpisode) &&
-        (metadata.mediaVersions?.length ?? 0) > 1 &&
-        itemServerId != null &&
-        context.read<MultiServerProvider>().serverManager.isClientOnline(itemServerId);
+    // Play's target carries a real choice — more than one version across its
+    // copies ([_offersVersionChoice]). Transcode-only quality picking
+    // deliberately stays in the ⋮ menu: a chevron on every item would stop
+    // signaling "multiple versions exist".
+    final showVersionSplit = _offersVersionChoice(context, playbackTarget, targetCopies?.copies);
     // M3E split-button geometry: stadium outer corners, small joined inner
     // corners, a hairline gap between the two segments, and a trailing
     // segment narrower than a full action so it reads as Play's appendix.
@@ -105,8 +110,10 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
     }
 
     Future<void> onPlayVersionPressed() async {
-      if (!_canUseDetail) return;
-      final didNavigate = await promptAndPlayVersion(context, metadata);
+      if (!_canUseDetail || playbackTarget == null) return;
+      // The episode Play would start on a show page, not the show.
+      final didNavigate = await promptAndPlayCopyVersion(context, playbackTarget, resolved: targetCopies?.copies);
+      _rechooseCopyTarget();
       // Same post-playback refresh plain Play gets from
       // navigateToVideoPlayerWithRefresh; the split segment is online-only.
       if (didNavigate && mounted) unawaited(_refreshWatchState());

@@ -20,6 +20,7 @@ import '../providers/watch_state_store.dart';
 import '../watch_together/providers/watch_together_provider.dart';
 import '../watch_together/models/watch_copy.dart';
 import '../screens/video_player_screen.dart';
+import '../widgets/copy_version_picker.dart';
 import '../services/copy_pick_store.dart';
 import '../services/copy_resolver.dart';
 import '../services/external_player_service.dart';
@@ -725,15 +726,7 @@ int? _versionSizeBytes(MediaVersion? version) {
 /// dismissed a picker or the context went away. The returned future completes
 /// after the player route pops, so callers can refresh on return.
 Future<bool> promptAndPlayVersion(BuildContext context, MediaItem item) async {
-  final itemServerId = serverIdOrNull(item.serverId);
-  final client = context.tryGetMediaClientForServer(itemServerId);
-  final itemServerOnline =
-      itemServerId != null && context.read<MultiServerProvider>().serverManager.isClientOnline(itemServerId);
-  // Same flag the in-player Version & Quality sheet reads — keeps both
-  // surfaces honest about what the active backend can actually do. Also
-  // requires a reachable server: capabilities are static, and a server
-  // dropping between surface build and tap must not offer transcodes.
-  final canTranscode = itemServerOnline && (client?.capabilities.videoTranscoding ?? false);
+  final client = context.tryGetMediaClientForServer(serverIdOrNull(item.serverId));
   final versions = client == null
       ? item.mediaVersions ?? const <MediaVersion>[]
       : await resolveMediaVersions(item, client);
@@ -747,17 +740,8 @@ Future<bool> promptAndPlayVersion(BuildContext context, MediaItem item) async {
   }
 
   final selectedVersion = selectedVersionIndex < versions.length ? versions[selectedVersionIndex] : null;
-  TranscodeQualityPreset selectedQuality = TranscodeQualityPreset.original;
-  if (canTranscode) {
-    final picked = await showQualityPickerDialog(
-      context,
-      sourceBitrateKbps: selectedVersion?.bitrate,
-      sourceDurationMs: item.durationMs,
-      sourceSizeBytes: _versionSizeBytes(selectedVersion),
-    );
-    if (picked == null || !context.mounted) return false;
-    selectedQuality = picked;
-  }
+  final selectedQuality = await _promptTranscodeQuality(context, item, selectedVersion);
+  if (selectedQuality == null || !context.mounted) return false;
 
   // Remember the pick so Continue Watching / plain Play resume this version
   // (#1492) — same store the in-player version switch writes.
@@ -774,6 +758,163 @@ Future<bool> promptAndPlayVersion(BuildContext context, MediaItem item) async {
     selectedQualityPreset: selectedQuality,
   );
   return true;
+}
+
+/// The transcode quality to play [item] at [version] with: asked when its
+/// server is reachable and can transcode, Original otherwise. Null when the
+/// user dismissed the picker.
+Future<TranscodeQualityPreset?> _promptTranscodeQuality(
+  BuildContext context,
+  MediaItem item,
+  MediaVersion? version,
+) async {
+  final serverId = serverIdOrNull(item.serverId);
+  final client = context.tryGetMediaClientForServer(serverId);
+  final serverOnline = serverId != null && context.read<MultiServerProvider>().serverManager.isClientOnline(serverId);
+  // Same flag the in-player Version & Quality sheet reads — keeps both
+  // surfaces honest about what the active backend can actually do. Also
+  // requires a reachable server: capabilities are static, and a server
+  // dropping between surface build and tap must not offer transcodes.
+  if (!serverOnline || !(client?.capabilities.videoTranscoding ?? false)) return TranscodeQualityPreset.original;
+  return showQualityPickerDialog(
+    context,
+    sourceBitrateKbps: version?.bitrate,
+    sourceDurationMs: item.durationMs,
+    sourceSizeBytes: _versionSizeBytes(version),
+  );
+}
+
+/// The Play Version flow across servers: the grouped picker over every copy
+/// of [item] ([showCopyVersionPicker]), then the quality step, the remembered
+/// pick (copy and in-server stores) and the launch, from the furthest
+/// progress across copies. [resolved] is the answer the caller already
+/// holds; a warm lookup wins over it, and without either the lookup waits at
+/// most [maxWait]. A lookup that can't answer, or that finds [item] alone with
+/// no pick to reset, runs [promptAndPlayVersion] unchanged.
+///
+/// "Use priority order" forgets the pick in both stores, then plays as plain
+/// Play does. Returns whether playback navigation started.
+Future<bool> promptAndPlayCopyVersion(
+  BuildContext context,
+  MediaItem item, {
+  ResolvedCopies? resolved,
+  Duration maxWait = const Duration(seconds: 2),
+}) async {
+  final picks = context.read<CopyPickStore?>();
+  final copies = await _copiesForPicker(context, item, held: resolved, maxWait: maxWait);
+  if (!context.mounted) return false;
+  final pick = copies == null ? null : picks?.read(copies.aliases);
+  if (copies == null || (pick == null && isOpenedAlone(copies, item))) return promptAndPlayVersion(context, item);
+
+  final listed = await _withVersionLists(context, copies);
+  if (!context.mounted) return false;
+  final choice = await showCopyVersionPicker(context, listed, hasPick: pick != null);
+  if (choice == null || !context.mounted) return false;
+
+  if (choice.reset) {
+    await picks?.clear(listed.aliases);
+    for (final copy in {
+      for (final copy in [...listed.copies, item]) copy.globalKey: copy,
+    }.values) {
+      await resetSavedMediaVersionPreferenceFor(copy);
+    }
+    if (!context.mounted) return false;
+    await playBestCopy(context, metadata: item);
+    return true;
+  }
+
+  final copy = choice.copy;
+  final versions = copy.mediaVersions ?? const <MediaVersion>[];
+  final version = choice.versionIndex < versions.length ? versions[choice.versionIndex] : null;
+  final quality = await _promptTranscodeQuality(context, copy, version);
+  if (quality == null || !context.mounted) return false;
+
+  // Written only here, from an explicit pick, like the in-server store. A
+  // copy outside any library can't be found again across servers.
+  final library = copy.libraryGlobalKey;
+  if (picks != null && library != null) {
+    await picks.write(
+      listed.aliases,
+      CopyPick(
+        key: copyPickKey(copy),
+        lib: library,
+        sig: version?.signature,
+        at: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+  if (versions.length > 1) await saveMediaVersionPreferenceFor(copy, index: choice.versionIndex, versions: versions);
+  if (!context.mounted) return false;
+
+  // The lookup leaves the opened item out when its server is offline, but
+  // its watch state is still where the user stopped.
+  final progress = [...listed.copies, if (!listed.copies.any((c) => c.globalKey == item.globalKey)) item];
+  await navigateToVideoPlayer(
+    context,
+    metadata: copy.copyWith(viewOffsetMs: furthestResumeOffsetMs(copy, progress) ?? copy.viewOffsetMs),
+    selectedMediaIndex: choice.versionIndex,
+    selectedMediaSourceId: version?.id,
+    selectedQualityPreset: quality,
+    // Listing overlaid the copies; a second overlay of the target's own key
+    // would undo the transferred offset.
+    resolveWatchState: false,
+    queueAnchor: item.kind == MediaKind.episode && copy.globalKey != item.globalKey ? item : null,
+  );
+  return true;
+}
+
+/// [item]'s copies for the Play Version picker, or null when there is no
+/// lookup to ask (not a movie or episode, no resolver) or it can't answer
+/// within [maxWait].
+Future<ResolvedCopies?> _copiesForPicker(
+  BuildContext context,
+  MediaItem item, {
+  required ResolvedCopies? held,
+  required Duration maxWait,
+}) async {
+  if (item.kind != MediaKind.movie && item.kind != MediaKind.episode) return null;
+  final resolver = context.read<CopyResolver?>();
+  if (resolver == null) return null;
+  final warm = resolver.peek(item) ?? held;
+  if (warm != null) return warm;
+  final priority = context.read<CopyPriorityProvider?>();
+  // Fresh per read: each read hangs a listener on it.
+  final abort = AbortController();
+  try {
+    return await () async {
+      await priority?.ensureInitialized();
+      return resolver.copiesOf(item, abort: abort);
+    }().timeout(maxWait);
+  } on TimeoutException {
+    abort.abort();
+    appLogger.w('Copy lookup for ${item.globalKey} took over $maxWait; offering its own versions');
+    return null;
+  } catch (e, st) {
+    appLogger.w('Could not list the copies of ${item.globalKey}', error: e, stackTrace: st);
+    return null;
+  }
+}
+
+/// [copies] overlaid with fresh watch state, each with its version list:
+/// rows that came without one (episode listings, Jellyfin resume rows) are
+/// fetched from their own server.
+Future<ResolvedCopies> _withVersionLists(BuildContext context, ResolvedCopies copies) async {
+  Future<MediaItem> listed(MediaItem copy) async {
+    if (copy.mediaVersions?.isNotEmpty ?? false) return copy;
+    final client = context.tryGetMediaClientForServer(serverIdOrNull(copy.serverId));
+    if (client == null) return copy;
+    final versions = await resolveMediaVersions(copy, client);
+    return versions.isEmpty ? copy : copy.copyWith(mediaVersions: versions);
+  }
+
+  final fresh = context.readFreshWatchStateAll(copies.copies);
+  return ResolvedCopies(
+    copies: await Future.wait(fresh.map(listed)),
+    failedServerIds: copies.failedServerIds,
+    cancelledServerIds: copies.cancelledServerIds,
+    unqueriedServerIds: copies.unqueriedServerIds,
+    aliases: copies.aliases,
+  );
 }
 
 /// Opens the Watch Together room's file [copy] in a new player. Returns

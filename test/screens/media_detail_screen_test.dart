@@ -30,6 +30,10 @@ import 'package:plezy/screens/media_detail_screen.dart';
 import 'package:plezy/models/download_models.dart';
 import 'package:plezy/navigation/profile_navigation_scope.dart';
 import 'package:plezy/services/plex_mappers.dart';
+import 'package:plezy/screens/video_player_screen.dart';
+import 'package:plezy/services/copy_pick_store.dart';
+import 'package:plezy/services/copy_resolver.dart';
+import 'package:plezy/services/storage_service.dart';
 
 import '../test_helpers/download_fixtures.dart';
 import '../test_helpers/paged_fakes.dart';
@@ -3327,6 +3331,420 @@ void main() {
       expectUnavailable();
     });
   });
+
+  // Copy priority (spec §3, detail page): Play names the copy it starts,
+  // Play Version picks among every copy's versions, a pick is remembered and
+  // reset, and a show page lists its other copies.
+  group('copies across servers', () {
+    const movieAliases = {'movie|tmdb:603'};
+    const showAliases = {'show|tvdb:81189'};
+    const v4kA = MediaVersion(id: 'v4k-a', videoResolution: '4k', videoCodec: 'hevc', container: 'mkv');
+    const v4kB = MediaVersion(id: 'v4k-b', videoResolution: '4k', videoCodec: 'h264', container: 'mp4');
+    const vHd = MediaVersion(id: 'v-hd', videoResolution: '1080', videoCodec: 'h264', container: 'mp4');
+
+    late StorageService storage;
+
+    setUp(() async {
+      // Settings first: the copy-pick store's storage shares its preferences.
+      await SettingsService.getInstance();
+      storage = await StorageService.getInstance();
+    });
+
+    MediaItem movieOn(
+      String serverId,
+      String serverName,
+      String libraryTitle, {
+      List<MediaVersion> versions = const [vHd],
+    }) => testMediaItem(
+      id: 'movie_$serverId',
+      backend: MediaBackend.jellyfin,
+      kind: MediaKind.movie,
+      title: 'The Movie',
+      durationMs: 7200000,
+      serverId: serverId,
+      serverName: serverName,
+      libraryId: 'lib_$serverId',
+      libraryTitle: libraryTitle,
+      mediaVersions: versions,
+    );
+
+    MediaItem showOn(String serverId, String serverName, String libraryTitle) => testMediaItem(
+      id: 'show_$serverId',
+      backend: MediaBackend.jellyfin,
+      kind: MediaKind.show,
+      title: 'The Show',
+      leafCount: 2,
+      viewedLeafCount: 0,
+      serverId: serverId,
+      serverName: serverName,
+      libraryId: 'lib_$serverId',
+      libraryTitle: libraryTitle,
+    );
+
+    MediaItem seasonOf(MediaItem show) => testMediaItem(
+      id: 'season_${show.serverId}',
+      backend: MediaBackend.jellyfin,
+      kind: MediaKind.season,
+      title: 'Season 1',
+      index: 1,
+      leafCount: 2,
+      viewedLeafCount: 0,
+      parentId: show.id,
+      serverId: show.serverId,
+      serverName: show.serverName,
+    );
+
+    MediaItem episodeOf(MediaItem show, int index, {List<MediaVersion>? versions}) => testMediaItem(
+      id: 'episode_${show.serverId}_$index',
+      backend: MediaBackend.jellyfin,
+      kind: MediaKind.episode,
+      title: 'Episode $index',
+      index: index,
+      durationMs: 1800000,
+      parentId: 'season_${show.serverId}',
+      parentIndex: 1,
+      grandparentId: show.id,
+      grandparentTitle: show.title,
+      serverId: show.serverId,
+      serverName: show.serverName,
+      libraryId: show.libraryId,
+      libraryTitle: show.libraryTitle,
+      mediaVersions: versions,
+    );
+
+    _FakeMediaServerClient clientFor(MediaItem item, {Map<String, List<MediaItem>> children = const {}}) =>
+        _FakeMediaServerClient(show: item, childrenByParent: children, id: item.serverId!, name: item.serverName!);
+
+    Future<List<VideoPlayerScreen>> pumpCopyDetail(
+      WidgetTester tester,
+      MediaItem item, {
+      required List<_FakeMediaServerClient> clients,
+      required _FakeCopyResolver resolver,
+      CopyPickStore? picks,
+      bool tv = false,
+    }) async {
+      TvDetectionService.debugSetAppleTVOverride(tv);
+      await SettingsService.getInstance();
+      tester.view.physicalSize = tv ? const Size(1280, 720) : const Size(1100, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      PlexApiCache.initialize(db);
+      JellyfinApiCache.initialize(db);
+      final downloadManager = DownloadManagerService(
+        database: db,
+        storageService: DownloadStorageService.instance,
+        clientResolver: (serverId, {clientScopeId}) => null,
+      );
+      downloadManager.recoveryFuture = Future<void>.value();
+      final downloadProvider = DownloadProvider.forTesting(downloadManager: downloadManager, database: db);
+      await downloadProvider.ensureInitialized();
+      final multi = testMultiServer(clients: clients);
+      final watchState = WatchStateStore();
+      final offlineWatch = OfflineWatchSyncService(database: db, serverManager: multi.manager);
+      addTearDown(() async {
+        watchState.dispose();
+        offlineWatch.dispose();
+        downloadProvider.dispose();
+        downloadManager.dispose();
+        await db.close();
+      });
+
+      final launches = <VideoPlayerScreen>[];
+      await tester.pumpWidget(
+        TranslationProvider(
+          child: MultiProvider(
+            providers: [
+              ChangeNotifierProvider<MultiServerProvider>.value(value: multi.provider),
+              ChangeNotifierProvider<DownloadProvider>.value(value: downloadProvider),
+              ChangeNotifierProvider<WatchStateStore>.value(value: watchState),
+              ChangeNotifierProvider<OfflineWatchSyncService>.value(value: offlineWatch),
+              Provider<CopyResolver>.value(value: resolver),
+              Provider<CopyPickStore?>.value(value: picks),
+            ],
+            child: MaterialApp(
+              navigatorObservers: [_LaunchSpy(launches)],
+              theme: monoTheme(MonoPalette.dark),
+              // Above the navigator: "Also in" pushes another detail page.
+              builder: (context, child) => withProfileNavigationScope(child: child!),
+              home: MediaDetailScreen(metadata: item),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      return launches;
+    }
+
+    // Past the page's lookup debounce, then the answer's frame.
+    Future<void> settleLookup(WidgetTester tester) async {
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+    }
+
+    // An answer lands in a microtask after the frame; the next frame shows it.
+    Future<void> deliver(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump();
+    }
+
+    Finder chevron() => find.descendant(
+      of: find.byType(FocusableActionBar),
+      matching: find.byIcon(Symbols.keyboard_arrow_down_rounded),
+    );
+    Finder inDialog(String text) => find.descendant(of: find.byType(Dialog), matching: find.text(text));
+
+    Future<void> tapAndSettle(WidgetTester tester, Finder finder) async {
+      await tester.tap(finder);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    // The copies are Jellyfin, which can transcode: the quality step follows
+    // the version step, as in the single-server picker. Keep Original.
+    Future<void> keepOriginalQuality(WidgetTester tester) =>
+        tapAndSettle(tester, inDialog(t.videoControls.qualityOriginal));
+
+    final plexMovie = movieOn('server_1', 'Server', 'Movies');
+    final siloMovie = movieOn('server_2', 'Silo', 'Movies 4K Remux', versions: const [v4kA, v4kB]);
+
+    testWidgets('Play label names the target library once resolved, plain Play before', (tester) async {
+      final resolver = _FakeCopyResolver();
+      await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), clientFor(siloMovie)],
+        resolver: resolver,
+      );
+      await settleLookup(tester);
+
+      expect(resolver.asked, [plexMovie.globalKey]);
+      expect(find.textContaining('Play ·'), findsNothing, reason: 'no result yet: plain Play');
+
+      resolver.answer(plexMovie, [siloMovie, plexMovie], aliases: movieAliases);
+      await deliver(tester);
+
+      expect(find.text('Play · Silo Movies 4K Remux'), findsOneWidget);
+    });
+
+    testWidgets('a result holding only the opened copy keeps plain Play', (tester) async {
+      final resolver = _FakeCopyResolver()..answer(plexMovie, [plexMovie], aliases: movieAliases);
+      await pumpCopyDetail(tester, plexMovie, clients: [clientFor(plexMovie)], resolver: resolver);
+      await settleLookup(tester);
+
+      expect(resolver.asked, [plexMovie.globalKey]);
+      expect(find.textContaining('Play ·'), findsNothing);
+    });
+
+    testWidgets('split segment shows for two single-version copies on two servers', (tester) async {
+      final siloSingle = movieOn('server_2', 'Silo', 'Movies 4K', versions: const [v4kA]);
+      final resolver = _FakeCopyResolver();
+      await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), clientFor(siloSingle)],
+        resolver: resolver,
+      );
+      await settleLookup(tester);
+      expect(chevron(), findsNothing, reason: 'the opened copy alone has one version');
+
+      resolver.answer(plexMovie, [siloSingle, plexMovie], aliases: movieAliases);
+      await deliver(tester);
+
+      expect(chevron(), findsOneWidget);
+    });
+
+    testWidgets('a picked copy plays that copy and version and is remembered', (tester) async {
+      final picks = CopyPickStore(storage, 'p1');
+      final resolver = _FakeCopyResolver()..answer(plexMovie, [siloMovie, plexMovie], aliases: movieAliases);
+      final launches = await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), clientFor(siloMovie)],
+        resolver: resolver,
+        picks: picks,
+      );
+      await settleLookup(tester);
+
+      await tapAndSettle(tester, chevron());
+      expect(inDialog('Silo · Movies 4K Remux · ${v4kA.displayLabel}'), findsOneWidget);
+      expect(inDialog('Server · Movies · ${vHd.displayLabel}'), findsOneWidget);
+      await tapAndSettle(tester, inDialog('Silo · Movies 4K Remux · ${v4kB.displayLabel}'));
+      await keepOriginalQuality(tester);
+
+      final launched = launches.single;
+      expect(launched.metadata.globalKey, siloMovie.globalKey);
+      expect(launched.selectedMediaIndex, 1);
+      expect(launched.selectedMediaSourceId, v4kB.id);
+      expect(launched.queueAnchor, isNull, reason: 'a movie has no episode queue');
+
+      final pick = picks.read(movieAliases);
+      expect(pick?.key, siloMovie.globalKey);
+      expect(pick?.lib, 'server_2:lib_server_2');
+      expect(pick?.sig, v4kB.signature);
+      expect(
+        (await savedMediaVersionPreferenceFor(siloMovie))?.index,
+        1,
+        reason: 'the in-server store still learns it',
+      );
+    });
+
+    testWidgets('"Use priority order" row appears only with a pick and clears both stores', (tester) async {
+      final picks = CopyPickStore(storage, 'p1');
+      final resolver = _FakeCopyResolver()..answer(plexMovie, [siloMovie, plexMovie], aliases: movieAliases);
+      final launches = await pumpCopyDetail(
+        tester,
+        plexMovie,
+        clients: [clientFor(plexMovie), clientFor(siloMovie)],
+        resolver: resolver,
+        picks: picks,
+      );
+      await settleLookup(tester);
+
+      await tapAndSettle(tester, chevron());
+      expect(inDialog(t.mediaMenu.playVersion), findsOneWidget);
+      expect(inDialog(t.mediaMenu.usePriorityOrder), findsNothing, reason: 'nothing to reset yet');
+      await tester.tapAt(const Offset(4, 4));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(launches, isEmpty);
+
+      // A pick of the lower copy, with a version choice remembered on Silo.
+      await picks.write(movieAliases, CopyPick(key: plexMovie.globalKey, lib: plexMovie.libraryGlobalKey!, at: 1));
+      await saveMediaVersionPreferenceFor(siloMovie, index: 1, versions: siloMovie.mediaVersions!);
+
+      await tapAndSettle(tester, chevron());
+      final reset = inDialog(t.mediaMenu.usePriorityOrder);
+      expect(reset, findsOneWidget);
+      expect(
+        tester.getTopLeft(reset).dy,
+        lessThan(tester.getTopLeft(inDialog('Silo · Movies 4K Remux · ${v4kA.displayLabel}')).dy),
+        reason: 'the first row',
+      );
+      await tapAndSettle(tester, reset);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(picks.read(movieAliases), isNull);
+      expect(await savedMediaVersionPreferenceFor(siloMovie), isNull);
+      expect(launches.single.metadata.globalKey, siloMovie.globalKey, reason: 'then plays in priority order');
+    });
+
+    testWidgets('show page: rail focus change mid-lookup drops the stale result', (tester) async {
+      final show = showOn('server_1', 'Server', 'TV Shows');
+      final episode1 = episodeOf(show, 1);
+      final episode2 = episodeOf(show, 2);
+      final siloShow = showOn('server_2', 'Silo', 'TV Shows 4K');
+      final jellyShow = showOn('server_3', 'Jelly', 'TV Shows');
+      final resolver = _FakeCopyResolver();
+      await pumpCopyDetail(
+        tester,
+        show,
+        clients: [
+          clientFor(
+            show,
+            children: {
+              show.id: [seasonOf(show)],
+              'season_server_1': [episode1, episode2],
+            },
+          ),
+        ],
+        resolver: resolver,
+        tv: true,
+      );
+
+      tester.state<TvBrowseRailState>(find.byType(TvBrowseRail)).requestFocus();
+      await tester.pump();
+      expect(find.text('S1E1'), findsOneWidget);
+      await settleLookup(tester);
+      expect(resolver.asked, contains(episode1.globalKey));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('S1E2'), findsOneWidget);
+      await settleLookup(tester);
+      expect(resolver.asked, contains(episode2.globalKey));
+      expect(resolver.aborts[episode1.globalKey]?.isAborted, isTrue, reason: 'the superseded lookup is aborted');
+
+      // Episode 1's answer arrives late, after focus moved on.
+      resolver.answer(episode1, [episodeOf(siloShow, 1), episode1], aliases: showAliases);
+      await deliver(tester);
+      expect(find.textContaining('Silo'), findsNothing, reason: "episode 1's copies must not label episode 2's Play");
+      expect(find.text('S1E2'), findsOneWidget);
+
+      resolver.answer(episode2, [episodeOf(jellyShow, 2), episode2], aliases: showAliases);
+      await deliver(tester);
+      expect(find.text('S1E2 · Jelly TV Shows'), findsOneWidget);
+    });
+
+    testWidgets('Play Version on a show page resolves the episode, not the show', (tester) async {
+      final show = showOn('server_1', 'Server', 'TV Shows');
+      final episode = episodeOf(show, 1, versions: const [vHd]);
+      final siloShow = showOn('server_2', 'Silo', 'TV Shows 4K');
+      final siloEpisode = episodeOf(siloShow, 1, versions: const [v4kA]);
+      final picks = CopyPickStore(storage, 'p1');
+      final resolver = _FakeCopyResolver()
+        ..answer(episode, [siloEpisode, episode], aliases: showAliases)
+        ..answer(show, [show], aliases: showAliases);
+      final client = clientFor(
+        show,
+        children: {
+          show.id: [seasonOf(show)],
+          'season_server_1': [episode],
+        },
+      )..onDeckEpisode = episode;
+      final launches = await pumpCopyDetail(
+        tester,
+        show,
+        clients: [client, clientFor(siloShow)],
+        resolver: resolver,
+        picks: picks,
+      );
+      await settleLookup(tester);
+
+      expect(resolver.asked, contains(episode.globalKey));
+      await tapAndSettle(tester, chevron());
+      expect(inDialog('Server · TV Shows · ${vHd.displayLabel}'), findsOneWidget);
+      await tapAndSettle(tester, inDialog('Silo · TV Shows 4K · ${v4kA.displayLabel}'));
+      await keepOriginalQuality(tester);
+
+      final launched = launches.single;
+      expect(launched.metadata.globalKey, siloEpisode.globalKey);
+      expect(launched.queueAnchor?.globalKey, episode.globalKey, reason: 'autoplay keeps walking the origin queue');
+      expect(picks.read(showAliases)?.key, siloShow.globalKey, reason: 'a series pick names the show copy');
+    });
+
+    testWidgets('"Also in" lists other show copies and opens the chosen one', (tester) async {
+      final show = showOn('server_1', 'Server', 'TV Shows');
+      final siloShow = showOn('server_2', 'Silo', 'TV Shows 4K');
+      final jellyShow = showOn('server_3', 'Jelly', 'Shows');
+      final resolver = _FakeCopyResolver()..answer(show, [siloShow, show, jellyShow], aliases: showAliases);
+      await pumpCopyDetail(
+        tester,
+        show,
+        clients: [clientFor(show), clientFor(siloShow), clientFor(jellyShow)],
+        resolver: resolver,
+      );
+      await settleLookup(tester);
+
+      expect(resolver.asked, contains(show.globalKey));
+      expect(find.text(t.mediaDetail.alsoIn), findsOneWidget);
+      expect(find.text('Silo TV Shows 4K'), findsOneWidget);
+      expect(find.text('Jelly Shows'), findsOneWidget);
+      expect(find.text('Server TV Shows'), findsNothing, reason: 'the open copy is not "also" anywhere');
+
+      await tapAndSettle(tester, find.text('Jelly Shows'));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final pages = tester.widgetList<MediaDetailScreen>(find.byType(MediaDetailScreen, skipOffstage: false));
+      expect([for (final page in pages) page.metadata.globalKey], [show.globalKey, jellyShow.globalKey]);
+    });
+  });
 }
 
 Map<String, dynamic> _previewItem(
@@ -3418,14 +3836,19 @@ class _FakeMediaServerClient implements MediaServerClient {
     this.pendingPlayableDescendants,
     this.mediaSourcesById = const {},
     Map<String, Map<String, dynamic>>? rawItems,
+    this.id = 'server_1',
+    this.name = 'Server',
   }) : rawItems = rawItems ?? {},
        childrenPageFuturesByStart = childrenPageFuturesByStart ?? {};
 
-  @override
-  ServerId get serverId => ServerId('server_1');
+  final String id;
+  final String name;
 
   @override
-  String? get serverName => 'Server';
+  ServerId get serverId => ServerId(id);
+
+  @override
+  String? get serverName => name;
 
   @override
   MediaBackend get backend => MediaBackend.jellyfin;
@@ -3555,5 +3978,52 @@ class _RecordingNavigatorObserver extends NavigatorObserver {
     if (popVideoPlayerImmediately && route.settings.name == kVideoPlayerRouteName) {
       scheduleMicrotask(() => navigator?.pop());
     }
+  }
+}
+
+/// Copies best first, answered when the test says so. Late answers still
+/// arrive after their caller aborted, as a shared lookup's would, so the page
+/// itself must drop them.
+class _FakeCopyResolver implements CopyResolver {
+  final asked = <String>[];
+  final aborts = <String, AbortController?>{};
+  final _answers = <String, Completer<ResolvedCopies>>{};
+
+  Completer<ResolvedCopies> _answerFor(MediaItem item) => _answers.putIfAbsent(item.globalKey, Completer.new);
+
+  void answer(MediaItem item, List<MediaItem> copies, {Set<String> aliases = const {}}) =>
+      _answerFor(item).complete(ResolvedCopies(copies: copies, aliases: aliases));
+
+  @override
+  Future<ResolvedCopies> copiesOf(MediaItem item, {AbortController? abort}) {
+    asked.add(item.globalKey);
+    aborts[item.globalKey] = abort;
+    return _answerFor(item).future;
+  }
+
+  @override
+  Future<ResolvedCopies> episodeCopiesOf(MediaItem episode, {AbortController? abort}) =>
+      copiesOf(episode, abort: abort);
+
+  @override
+  ResolvedCopies? peek(MediaItem item) => null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Records the player each video route would build, then removes the route
+/// before its first frame, so no player starts.
+class _LaunchSpy extends NavigatorObserver {
+  _LaunchSpy(this.launches);
+
+  final List<VideoPlayerScreen> launches;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is! VideoPlayerRoute) return;
+    final nav = navigator!;
+    launches.add(route.buildPage(nav.context, kAlwaysCompleteAnimation, kAlwaysCompleteAnimation) as VideoPlayerScreen);
+    scheduleMicrotask(() => nav.removeRoute(route));
   }
 }
