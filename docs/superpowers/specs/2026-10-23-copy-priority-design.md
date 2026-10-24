@@ -44,6 +44,7 @@ servers is a separate, later project; this design must not depend on it.
 | Manual pick of a lower copy | Remembered per movie / series |
 | When copies are looked up | When the detail page opens (background), with a short wait on Play |
 | Catalog detail chooser | Follows the same ranking |
+| Ranking across several TVs | Per device; set on each TV, not exported |
 
 ## 1. Priority list
 
@@ -58,8 +59,10 @@ to `_libraryPreferenceKeys` for the full clear. Exposed through a
 profile-scoped `CopyPriorityProvider` (`ChangeNotifier`, same shape as
 `HiddenLibrariesProvider`).
 
-**Across TVs.** `StorageService` is device-local SharedPreferences. See
-"Open questions" for how the ranking reaches the user's other TVs.
+**Across TVs.** `StorageService` is device-local SharedPreferences, and the
+ranking and picks stay per device by decision: the user ranks on each TV.
+Neither key joins settings export/import. A shared, server-side store belongs
+with the later sync project.
 
 **Settings UI.** Settings → Playback → "Copy priority": a reorderable list of
 every video library across the profile's servers, using
@@ -401,12 +404,6 @@ On device (Android TV), against the real servers:
 
 ## Open questions
 
-- **Several TVs.** The ranking and picks are stored per device. Options:
-  (a) per device, and the user ranks on each TV; (b) add both keys to
-  settings export/import (`settings_export_service.dart:91`, whose registry is
-  closed today), so the user ranks once and imports on the other TVs; (c) a
-  server-side store shared by every TV, which belongs with the sync project.
-  Awaiting the user's choice.
 - Silo's write support for playback progress through its Jellyfin API is
   unknown. This design needs only the normal progress reports every Jellyfin
   server receives while playing.
