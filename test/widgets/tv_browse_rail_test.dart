@@ -14,10 +14,13 @@ import 'package:plezy/media/media_item.dart';
 import 'package:plezy/media/media_kind.dart';
 import 'package:plezy/profiles/active_profile_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
+import 'package:plezy/services/copy_resolver.dart';
 import 'package:plezy/services/device_performance.dart';
 import 'package:plezy/services/multi_server_manager.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/theme/mono_theme.dart';
+import 'package:plezy/utils/copy_warmer.dart';
+import 'package:plezy/utils/media_server_http_client.dart' show AbortController;
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/widgets/animated_dim_scrim.dart';
 import 'package:plezy/widgets/media_card.dart';
@@ -3159,6 +3162,107 @@ void main() {
         );
     expect(inactiveRow.pixels, 0);
   });
+
+  testWidgets('looks up the copies of the movie or episode focus rests on', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 720);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final serverManager = MultiServerManager();
+    final resolver = _RecordingResolver();
+    final first = testMediaItem(id: 'ep_1', backend: MediaBackend.plex, kind: MediaKind.episode, title: 'One');
+    final second = testMediaItem(id: 'ep_2', backend: MediaBackend.plex, kind: MediaKind.episode, title: 'Two');
+    final hub = MediaHub(
+      id: 'continue_watching',
+      title: 'Continue Watching',
+      type: 'mixed',
+      items: [first, second],
+      size: 2,
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<MultiServerProvider>(create: (_) => testMultiServerProvider(serverManager)),
+          Provider<CopyResolver?>.value(value: resolver),
+        ],
+        child: MaterialApp(
+          theme: monoTheme(MonoPalette.dark),
+          home: Scaffold(
+            body: SizedBox(
+              width: 1280,
+              height: 720,
+              child: TvBrowseRail(
+                focusMemory: focusMemory,
+                hubs: [hub],
+                autofocus: true,
+                warmsCopies: true,
+                iconForHub: (_, _) => Icons.tv_rounded,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(CopyWarmer.delay);
+    expect(resolver.asked, [first.globalKey], reason: 'the item the rail opens on');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(CopyWarmer.delay);
+
+    expect(resolver.asked, [first.globalKey, second.globalKey]);
+  });
+
+  testWidgets('a rail that does not warm copies looks nothing up', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 720);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final serverManager = MultiServerManager();
+    final resolver = _RecordingResolver();
+    final first = testMediaItem(id: 'ep_1', backend: MediaBackend.plex, kind: MediaKind.episode, title: 'One');
+    final second = testMediaItem(id: 'ep_2', backend: MediaBackend.plex, kind: MediaKind.episode, title: 'Two');
+    final hub = MediaHub(
+      id: 'continue_watching',
+      title: 'Continue Watching',
+      type: 'mixed',
+      items: [first, second],
+      size: 2,
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<MultiServerProvider>(create: (_) => testMultiServerProvider(serverManager)),
+          Provider<CopyResolver?>.value(value: resolver),
+        ],
+        child: MaterialApp(
+          theme: monoTheme(MonoPalette.dark),
+          home: Scaffold(
+            body: SizedBox(
+              width: 1280,
+              height: 720,
+              child: TvBrowseRail(
+                focusMemory: focusMemory,
+                hubs: [hub],
+                autofocus: true,
+                iconForHub: (_, _) => Icons.tv_rounded,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(CopyWarmer.delay);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(CopyWarmer.delay);
+
+    expect(resolver.asked, isEmpty);
+  });
 }
 
 ScrollPosition _activeRailPosition(WidgetTester tester) {
@@ -3179,4 +3283,24 @@ ScrollPosition _verticalRailPosition(WidgetTester tester) {
       .stateList<ScrollableState>(scrollable)
       .map((state) => state.position)
       .singleWhere((position) => axisDirectionToAxis(position.axisDirection) == Axis.vertical);
+}
+
+/// Records the lookups asked of it; nothing is ever cached.
+class _RecordingResolver implements CopyResolver {
+  final asked = <String>[];
+
+  @override
+  bool get isDisposed => false;
+
+  @override
+  ResolvedCopies? peek(MediaItem item) => null;
+
+  @override
+  Future<ResolvedCopies> copiesOf(MediaItem item, {AbortController? abort}) async {
+    asked.add(item.globalKey);
+    return ResolvedCopies(copies: [item]);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

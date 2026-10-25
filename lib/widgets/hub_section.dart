@@ -20,6 +20,7 @@ import '../media/media_hub.dart';
 import '../media/media_item.dart';
 import '../mixins/mounted_set_state_mixin.dart';
 import '../screens/hub_detail_screen.dart';
+import '../utils/copy_warmer.dart';
 import '../utils/media_navigation_helper.dart';
 import 'card_inflation_budget.dart';
 import 'focus_builders.dart';
@@ -64,6 +65,10 @@ class HubSection extends StatefulWidget {
 
   /// Reports the current focused media item. Used by TV spotlight layouts.
   final ValueChanged<MediaItem>? onFocusedItemChanged;
+
+  /// Whether the copies of the movie or episode focus rests on are looked up
+  /// ahead ([CopyWarmer]), for rows whose items Play starts directly.
+  final bool warmsCopies;
 
   /// Overrides the default media navigation for an item.
   final ValueChanged<MediaItem>? onItemTap;
@@ -112,6 +117,7 @@ class HubSection extends StatefulWidget {
     this.loadMoreItems,
     this.totalResults,
     this.onFocusedItemChanged,
+    this.warmsCopies = false,
     this.onItemTap,
     this.onItemLongPress,
     this.onVerticalNavigation,
@@ -130,6 +136,7 @@ class HubSection extends StatefulWidget {
 
 class HubSectionState extends State<HubSection> with MountedSetStateMixin, SkeletonUpgradeScheduler {
   late FocusNode _hubFocusNode;
+  late final CopyWarmer _copyWarmer = CopyWarmer(context);
   final ScrollController _scrollController = ScrollController();
 
   /// Current visual focus index (not tied to Flutter's focus system)
@@ -215,6 +222,7 @@ class HubSectionState extends State<HubSection> with MountedSetStateMixin, Skele
 
   @override
   void dispose() {
+    _copyWarmer.dispose();
     _selectLongPress.dispose();
     _hubFocusNode.removeListener(_onFocusChange);
     _hubFocusNode.dispose();
@@ -401,7 +409,9 @@ class HubSectionState extends State<HubSection> with MountedSetStateMixin, Skele
 
   void _notifyFocusedItemChanged() {
     if (_focusedIndex < 0 || _focusedIndex >= widget.hub.items.length) return;
-    widget.onFocusedItemChanged?.call(widget.hub.items[_focusedIndex]);
+    final item = widget.hub.items[_focusedIndex];
+    if (widget.warmsCopies) _copyWarmer.focused(item);
+    widget.onFocusedItemChanged?.call(item);
   }
 
   void _activateCurrentItem() {

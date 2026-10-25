@@ -21,6 +21,7 @@ import '../screens/hub_detail_screen.dart';
 import '../services/device_performance.dart';
 import '../services/settings_service.dart';
 import '../theme/mono_tokens.dart';
+import '../utils/copy_warmer.dart';
 import '../utils/layout_constants.dart';
 import '../utils/media_image_helper.dart';
 import '../utils/media_navigation_helper.dart';
@@ -354,6 +355,10 @@ class TvBrowseRail extends StatefulWidget {
   final bool showServerName;
   final ValueChanged<MediaItem>? onFocusedItemChanged;
   final void Function(MediaHub hub, MediaItem item)? onFocusedHubItemChanged;
+
+  /// Whether the copies of the movie or episode focus rests on are looked up
+  /// ahead ([CopyWarmer]), for rows whose items Play starts directly.
+  final bool warmsCopies;
   final void Function(MediaItem source)? onRefresh;
   final VoidCallback? onRemoveFromContinueWatching;
   final bool Function(MediaHub hub)? isContinueWatchingHub;
@@ -408,6 +413,7 @@ class TvBrowseRail extends StatefulWidget {
     required this.iconForHub,
     this.showServerName = false,
     this.onFocusedItemChanged,
+    this.warmsCopies = false,
     this.onFocusedHubItemChanged,
     this.onRefresh,
     this.onRemoveFromContinueWatching,
@@ -438,6 +444,8 @@ class TvBrowseRail extends StatefulWidget {
 }
 
 class TvBrowseRailState extends State<TvBrowseRail> with TickerProviderStateMixin {
+  late final CopyWarmer _copyWarmer = CopyWarmer(context);
+
   // Per-step scroll glide; platform-specific, see
   // FocusTheme.navigationScrollDuration. Successive steps — including
   // hold-repeats — retarget the animation from the row's current offset, so a
@@ -677,6 +685,7 @@ class TvBrowseRailState extends State<TvBrowseRail> with TickerProviderStateMixi
 
   @override
   void dispose() {
+    _copyWarmer.dispose();
     _selectLongPress.dispose();
     _focusNode.removeListener(_handleFocusChange);
     _focusNode.dispose();
@@ -741,6 +750,7 @@ class TvBrowseRailState extends State<TvBrowseRail> with TickerProviderStateMixi
     if (hub == null) return;
     final item = _itemAtSlot(hub, _itemIndex);
     if (item == null) return;
+    if (widget.warmsCopies) _copyWarmer.focused(item);
     widget.onFocusedItemChanged?.call(item);
     widget.onFocusedHubItemChanged?.call(hub, item);
   }
