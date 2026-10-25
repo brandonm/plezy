@@ -162,6 +162,111 @@ void main() {
     _expectOrder(tester, ['Srv1 · B', 'Srv1 · A', _unranked]);
   });
 
+  testWidgets('with nothing ranked, the top row moves up above the divider, by D-pad', (tester) async {
+    final priority = await _pump(tester, [_lib('1', 'a', 'A'), _lib('1', 'b', 'B')]);
+    _expectOrder(tester, [_unranked, 'Srv1 · A', 'Srv1 · B']);
+
+    await _key(tester, LogicalKeyboardKey.select); // move A
+    await _key(tester, LogicalKeyboardKey.arrowUp); // across the divider
+    _expectOrder(tester, ['Srv1 · A', _unranked, 'Srv1 · B']);
+    await _key(tester, LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+
+    expect(priority.priority, ['1:a']);
+    _expectOrder(tester, ['Srv1 · A', _unranked, 'Srv1 · B']);
+  });
+
+  testWidgets('crossing the top divider and back leaves nothing ranked', (tester) async {
+    final priority = await _pump(tester, [_lib('1', 'a', 'A'), _lib('1', 'b', 'B')]);
+
+    await _key(tester, LogicalKeyboardKey.select);
+    await _key(tester, LogicalKeyboardKey.arrowUp);
+    await _key(tester, LogicalKeyboardKey.arrowDown);
+    _expectOrder(tester, [_unranked, 'Srv1 · A', 'Srv1 · B']);
+    await _key(tester, LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+
+    expect(priority.priority, isEmpty);
+  });
+
+  testWidgets('with nothing ranked, a row moved up stays put: it is ranked', (tester) async {
+    final priority = await _pump(tester, [_lib('1', 'a', 'A'), _lib('1', 'b', 'B')]);
+
+    await _key(tester, LogicalKeyboardKey.arrowDown); // cursor to B
+    await _key(tester, LogicalKeyboardKey.select);
+    await _key(tester, LogicalKeyboardKey.arrowUp); // B above A
+    await _key(tester, LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+
+    expect(priority.priority, ['1:b']);
+    _expectOrder(tester, ['Srv1 · B', _unranked, 'Srv1 · A']);
+  });
+
+  testWidgets('an unranked row moved down stays put: it and the rows above it are ranked', (tester) async {
+    final priority = await _pump(tester, [_lib('1', 'a', 'A'), _lib('1', 'b', 'B'), _lib('1', 'c', 'C')]);
+
+    await _key(tester, LogicalKeyboardKey.select); // move A
+    await _key(tester, LogicalKeyboardKey.arrowDown); // below B
+    await _key(tester, LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+
+    expect(priority.priority, ['1:b', '1:a']);
+    _expectOrder(tester, ['Srv1 · B', 'Srv1 · A', _unranked, 'Srv1 · C']);
+  });
+
+  testWidgets('an unranked row moved within the unranked part joins the end of the ranking', (tester) async {
+    final priority = await _pump(
+      tester,
+      [_lib('1', 'a', 'A'), _lib('1', 'b', 'B'), _lib('1', 'c', 'C')],
+      stored: ['1:a'],
+    );
+
+    await _key(tester, LogicalKeyboardKey.arrowDown);
+    await _key(tester, LogicalKeyboardKey.arrowDown); // cursor to C
+    await _key(tester, LogicalKeyboardKey.select);
+    await _key(tester, LogicalKeyboardKey.arrowUp); // C above B, still below the divider
+    await _key(tester, LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+
+    expect(priority.priority, ['1:a', '1:c']);
+    _expectOrder(tester, ['Srv1 · A', 'Srv1 · C', _unranked, 'Srv1 · B']);
+  });
+
+  testWidgets('an unranked row moved and brought back ranks nothing', (tester) async {
+    final priority = await _pump(tester, [_lib('1', 'a', 'A'), _lib('1', 'b', 'B')]);
+
+    await _key(tester, LogicalKeyboardKey.arrowDown);
+    await _key(tester, LogicalKeyboardKey.select);
+    await _key(tester, LogicalKeyboardKey.arrowUp);
+    await _key(tester, LogicalKeyboardKey.arrowDown);
+    await _key(tester, LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+
+    expect(priority.priority, isEmpty);
+  });
+
+  testWidgets('with nothing ranked, a row dragged above another, below the divider, is ranked', (tester) async {
+    final priority = await _pump(tester, [_lib('1', 'a', 'A'), _lib('1', 'b', 'B')]);
+
+    final handle = find.descendant(
+      of: find.widgetWithText(ListTile, 'Srv1 · B'),
+      matching: find.byType(ReorderableDragStartListener),
+    );
+    final gesture = await tester.startGesture(tester.getCenter(handle));
+    await tester.pump();
+    // Just past A's middle: B lands before A, still under the divider.
+    final above = tester.getCenter(find.text('Srv1 · A')).dy - tester.getCenter(handle).dy - 8;
+    for (var i = 0; i < 10; i++) {
+      await gesture.moveBy(Offset(0, above / 10));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(priority.priority, ['1:b']);
+    _expectOrder(tester, ['Srv1 · B', _unranked, 'Srv1 · A']);
+  });
+
   testWidgets('stored keys for missing libraries are not shown and are kept, in place, on next save', (tester) async {
     // Server 9 is offline, or its libraries haven't loaded yet.
     final priority = await _pump(

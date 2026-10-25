@@ -76,10 +76,18 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
   /// within one part.
   bool? _moveStartedRanked;
 
+  /// Where the row being moved started, captured with [_moveStartedRanked].
+  int? _moveStartIndex;
+
   /// Whether the row being moved, last of all and ranked when the move began,
   /// was carried down across the divider at the end. No row sits below it to
   /// swap with, so the crossing is a step of its own.
   bool _crossedEndDivider = false;
+
+  /// Whether the row being moved, first of all with nothing ranked, was
+  /// carried up across the divider at the top: the mirror of
+  /// [_crossedEndDivider].
+  bool _crossedTopDivider = false;
 
   final FocusNode _listFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -147,7 +155,7 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
     final moving = movingIndex;
     final startedRanked = _moveStartedRanked;
     if (moving == null || startedRanked == null) return _rankedCount;
-    if (!startedRanked && moving < _rankedCount) return _rankedCount + 1;
+    if (!startedRanked && (moving < _rankedCount || _crossedTopDivider)) return _rankedCount + 1;
     if (startedRanked && (moving >= _rankedCount || _crossedEndDivider)) return _rankedCount - 1;
     return _rankedCount;
   }
@@ -164,13 +172,35 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
     );
   }
 
+  /// An unranked row moved within the unranked part keeps the place it was
+  /// put in: it and every row above it are ranked, so the order on screen is
+  /// the order saved.
   @override
-  void onReorderMoveConfirmed() => _save(_items, _effectiveRankedCount);
+  void onReorderMoveConfirmed() {
+    final moving = movingIndex;
+    final count = _effectiveRankedCount;
+    final movedWithinUnranked =
+        moving != null && _moveStartedRanked == false && moving >= count && moving != _moveStartIndex;
+    _save(_items, movedWithinUnranked ? moving + 1 : count);
+  }
 
-  /// The last row crosses the divider at the end in place, DOWN to unrank it
-  /// and UP to rank it again; every other key goes to [handleReorderKeyEvent].
+  /// With nothing ranked, the first row crosses the divider at the top in
+  /// place, UP to rank it and DOWN to unrank it again. The last row crosses
+  /// the divider at the end in place, DOWN to unrank it and UP to rank it
+  /// again. Every other key goes to [handleReorderKeyEvent].
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
     final moving = movingIndex;
+    if (moving == 0 && _rankedCount == 0 && event.isActionable) {
+      final key = event.logicalKey;
+      if (key.isUpKey && !_crossedTopDivider) {
+        setState(() => _crossedTopDivider = true);
+        return KeyEventResult.handled;
+      }
+      if (key.isDownKey && _crossedTopDivider) {
+        setState(() => _crossedTopDivider = false);
+        return KeyEventResult.handled;
+      }
+    }
     if (moving != null && moving == _items.length - 1 && event.isActionable) {
       final key = event.logicalKey;
       if (key.isDownKey && moving < _effectiveRankedCount) {
@@ -190,14 +220,17 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
 
   /// Touch drag. [oldIndex] and [newIndex] address the display list, which has
   /// the divider in it; dropping a row on the other side of the divider ranks
-  /// or unranks it.
+  /// or unranks it, and moving one within the unranked part ranks it as
+  /// [onReorderMoveConfirmed] does.
   void _onDragReorder(int oldIndex, int newIndex) {
     final display = <Object>[..._items.take(_rankedCount), _divider, ..._items.skip(_rankedCount)];
     final moved = display.removeAt(oldIndex);
     display.insert(newIndex, moved);
     final dividerAt = display.indexOf(_divider);
     final items = display.whereType<MediaLibrary>().toList();
-    setState(() => _save(items, dividerAt));
+    final movedAt = display.indexOf(moved);
+    final movedWithinUnranked = oldIndex > _rankedCount && movedAt > dividerAt && movedAt != oldIndex;
+    setState(() => _save(items, movedWithinUnranked ? movedAt : dividerAt));
   }
 
   @override
@@ -206,9 +239,12 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
     // before any swap, so its index is still the starting one.
     if (movingIndex == null) {
       _moveStartedRanked = null;
+      _moveStartIndex = null;
       _crossedEndDivider = false;
+      _crossedTopDivider = false;
     } else {
       _moveStartedRanked ??= movingIndex! < _rankedCount;
+      _moveStartIndex ??= movingIndex;
     }
 
     final count = _effectiveRankedCount;
