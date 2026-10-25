@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:plezy/media/copy_priority.dart';
 import 'package:plezy/focus/focusable_action_bar.dart';
 import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/media/media_kind.dart';
@@ -602,7 +603,7 @@ void main() {
     double top(String text) => tester.getTopLeft(find.text(text)).dy;
     expect(top('4K Movies'), lessThan(top('Movies')), reason: 'unranked: best resolution first');
 
-    await priority.setPriority(['server-1:hd']);
+    await priority.setPriority(CopyPrioritySection.movies, ['server-1:hd']);
     await tester.pumpAndSettle();
 
     expect(top('Movies'), lessThan(top('4K Movies')), reason: 'the ranked HD library now leads');

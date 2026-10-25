@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plezy/media/copy_priority.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_item.dart';
@@ -148,19 +149,21 @@ void main() {
   });
 
   group('compareCopiesByPriority', () {
-    MediaItem ranked(String id, String serverId, String? libraryId, {int? height}) => testMediaItem(
-      id: id,
-      serverId: serverId,
-      serverName: serverId,
-      libraryId: libraryId,
-      mediaVersions: height == null ? null : [MediaVersion(id: '$id-v', height: height)],
-    );
+    MediaItem ranked(String id, String serverId, String? libraryId, {int? height, MediaKind kind = MediaKind.movie}) =>
+        testMediaItem(
+          id: id,
+          kind: kind,
+          serverId: serverId,
+          serverName: serverId,
+          libraryId: libraryId,
+          mediaVersions: height == null ? null : [MediaVersion(id: '$id-v', height: height)],
+        );
 
     List<String> order(List<MediaItem> items, Comparator<MediaItem> cmp) =>
         ([...items]..sort(cmp)).map((i) => i.id).toList();
 
     test('ranked libraries order by list index', () {
-      final cmp = compareCopiesByPriority(['silo:remux', 'silo:4k', 'plex:movies']);
+      final cmp = compareCopiesByPriority(CopyPriority(movies: ['silo:remux', 'silo:4k', 'plex:movies']));
       final plexMovies = ranked('a', 'plex', 'movies', height: 1080);
       final silo4k = ranked('b', 'silo', '4k', height: 2160);
       final siloRemux = ranked('c', 'silo', 'remux', height: 2160);
@@ -169,7 +172,7 @@ void main() {
     });
 
     test('any ranked copy beats any unranked copy', () {
-      final cmp = compareCopiesByPriority(['plex:movies']);
+      final cmp = compareCopiesByPriority(CopyPriority(movies: ['plex:movies']));
       final rankedLow = ranked('low', 'plex', 'movies', height: 720);
       final unrankedHigh = ranked('high', 'silo', 'other', height: 2160);
 
@@ -178,7 +181,7 @@ void main() {
     });
 
     test('unranked copies order by best resolution', () {
-      final cmp = compareCopiesByPriority(['plex:movies']);
+      final cmp = compareCopiesByPriority(CopyPriority(movies: ['plex:movies']));
       final sd = ranked('sd', 'silo', 'x', height: 480);
       final uhd = ranked('uhd', 'silo', 'y', height: 2160);
       final none = ranked('none', 'silo', 'z');
@@ -187,7 +190,7 @@ void main() {
     });
 
     test('copy without libraryId is unranked', () {
-      final cmp = compareCopiesByPriority(['plex:movies']);
+      final cmp = compareCopiesByPriority(CopyPriority(movies: ['plex:movies']));
       final rankedCopy = ranked('r', 'plex', 'movies', height: 480);
       final unstamped = ranked('u', 'plex', null, height: 2160);
 
@@ -195,7 +198,7 @@ void main() {
     });
 
     test('ties fall through to compareLibraryCopies and are total', () {
-      final cmp = compareCopiesByPriority(const []);
+      final cmp = compareCopiesByPriority(CopyPriority.empty);
       final items = [
         ranked('c', 'silo', 'x', height: 1080),
         ranked('a', 'silo', 'x', height: 1080),
@@ -209,8 +212,33 @@ void main() {
       expect(cmp(items[0], items[0]), 0);
     });
 
+    test('episodes and shows are ranked by the shows list, movies by the movies list', () {
+      // Two mixed libraries, ranked in opposite orders in the two lists.
+      final cmp = compareCopiesByPriority(
+        const CopyPriority(movies: ['jf:mixed', 'plex:mixed'], shows: ['plex:mixed', 'jf:mixed']),
+      );
+
+      final movieInJf = ranked('mj', 'jf', 'mixed', height: 480);
+      final movieInPlex = ranked('mp', 'plex', 'mixed', height: 2160);
+      expect(order([movieInPlex, movieInJf], cmp), ['mj', 'mp']);
+
+      for (final kind in [MediaKind.episode, MediaKind.show]) {
+        final inJf = ranked('ej', 'jf', 'mixed', height: 2160, kind: kind);
+        final inPlex = ranked('ep', 'plex', 'mixed', height: 480, kind: kind);
+        expect(order([inJf, inPlex], cmp), ['ep', 'ej'], reason: kind.name);
+      }
+    });
+
+    test('a library ranked only for movies leaves its episodes unranked', () {
+      final cmp = compareCopiesByPriority(const CopyPriority(movies: ['jf:mixed']));
+      final inMixed = ranked('em', 'jf', 'mixed', height: 480, kind: MediaKind.episode);
+      final inPlex = ranked('ep', 'plex', 'tv', height: 2160, kind: MediaKind.episode);
+
+      expect(order([inMixed, inPlex], cmp), ['ep', 'em'], reason: 'both unranked: by resolution');
+    });
+
     test('a priority entry naming no present library is ignored', () {
-      final cmp = compareCopiesByPriority(['gone:1', 'silo:4k']);
+      final cmp = compareCopiesByPriority(CopyPriority(movies: ['gone:1', 'silo:4k']));
       final silo4k = ranked('k', 'silo', '4k', height: 480);
       final other = ranked('o', 'plex', 'movies', height: 2160);
 

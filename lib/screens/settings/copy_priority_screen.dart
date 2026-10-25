@@ -8,21 +8,13 @@ import '../../focus/dpad_navigator.dart';
 import '../../focus/dpad_reorder_mixin.dart';
 import '../../focus/input_mode_tracker.dart';
 import '../../i18n/strings.g.dart';
-import '../../media/media_kind.dart';
+import '../../media/copy_priority.dart';
 import '../../media/media_library.dart';
 import '../../providers/copy_priority_provider.dart';
 import '../../providers/libraries_provider.dart';
 import '../../utils/app_logger.dart';
 import '../../utils/content_utils.dart';
 import '../../widgets/app_icon.dart';
-
-/// Whether [library] holds video that Play can start: movies or shows, or a
-/// mixed library whose root browse includes either.
-bool _isVideoLibrary(MediaLibrary library) => switch (library.kind) {
-  MediaKind.movie || MediaKind.show => true,
-  MediaKind.unknown => library.defaultBrowseKinds.any((k) => k == MediaKind.movie || k == MediaKind.show),
-  _ => false,
-};
 
 /// [ranked] with the keys of [stored] the screen doesn't show (a server offline
 /// or not loaded yet) kept in place: each right after the stored key before it
@@ -46,13 +38,15 @@ List<String> _keepingHidden(List<String> ranked, Set<String> shown, List<String>
   ];
 }
 
-/// Settings → Playback → Copy priority: ranks libraries across servers so Play
-/// starts the best-ranked copy of a title. Libraries the user has not ranked
-/// sit below a divider and are ordered by resolution at play time. The
-/// divider shows even when every library is ranked, at the end, so a row can
-/// be moved below it.
+/// Settings → Playback → Copy priority for movies or for TV shows: ranks the
+/// [section]'s libraries across servers so Play starts the best-ranked copy of
+/// a title. Libraries the user has not ranked sit below a divider and are
+/// ordered by resolution at play time. The divider shows even when every
+/// library is ranked, at the end, so a row can be moved below it.
 class CopyPriorityScreen extends StatefulWidget {
-  const CopyPriorityScreen({super.key});
+  const CopyPriorityScreen({super.key, required this.section});
+
+  final CopyPrioritySection section;
 
   @override
   State<CopyPriorityScreen> createState() => _CopyPriorityScreenState();
@@ -129,9 +123,9 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
   /// when it is saved ([_keepingHidden]).
   void _syncFromProviders({bool notify = true}) {
     if (!mounted || movingIndex != null) return;
-    final present = {for (final l in _libraries.libraries.where(_isVideoLibrary)) l.globalKey: l};
+    final present = {for (final l in _libraries.libraries.where(widget.section.holds)) l.globalKey: l};
     final ranked = <MediaLibrary>[];
-    for (final key in _priority.priority) {
+    for (final key in _stored) {
       final library = present.remove(key);
       if (library != null) ranked.add(library);
     }
@@ -160,13 +154,18 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
     return _rankedCount;
   }
 
+  List<String> get _stored => _priority.priority.of(widget.section);
+
   void _save(List<MediaLibrary> items, int rankedCount) {
     _items = items;
     _rankedCount = rankedCount;
     final ranked = [for (final l in items.take(rankedCount)) l.globalKey];
     final shown = {for (final l in items) l.globalKey};
     unawaited(
-      _priority.setPriority(_keepingHidden(ranked, shown, _priority.priority)).catchError((Object e, StackTrace st) {
+      _priority.setPriority(widget.section, _keepingHidden(ranked, shown, _stored)).catchError((
+        Object e,
+        StackTrace st,
+      ) {
         appLogger.w('Could not save the copy priority', error: e, stackTrace: st);
       }),
     );
@@ -264,7 +263,7 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
       onPopInvokedWithResult: (didPop, result) {},
       child: Scaffold(
         appBar: AppBar(
-          title: Text(t.settings.copyPriority),
+          title: Text(_title),
           leading: BackButton(onPressed: () => Navigator.pop(context)),
         ),
         body: Focus(
@@ -283,6 +282,11 @@ class _CopyPriorityScreenState extends State<CopyPriorityScreen>
       ),
     );
   }
+
+  String get _title => switch (widget.section) {
+    CopyPrioritySection.movies => t.settings.copyPriorityMovies,
+    CopyPrioritySection.shows => t.settings.copyPriorityShows,
+  };
 
   Widget _buildDivider() {
     final scheme = Theme.of(context).colorScheme;

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../media/copy_priority.dart';
 import '../media/ids.dart';
 import '../media/library_filter_selection.dart';
 import '../media/library_query.dart';
@@ -19,7 +20,8 @@ class StorageService extends BaseSharedPreferencesService {
   static const String _keyLibraryOrder = 'library_order';
   static const String _keyCurrentUserUUID = 'current_user_uuid';
   static const String _keyHiddenLibraries = 'hidden_libraries';
-  static const String _keyCopyPriority = 'copy_priority';
+  static const String _keyCopyPriorityMovies = 'copy_priority_movies';
+  static const String _keyCopyPriorityShows = 'copy_priority_shows';
   static const String _keyCopyPicks = 'copy_picks';
   static const String _keyServersList = 'servers_list';
   static const String _keyServerOrder = 'server_order';
@@ -40,7 +42,8 @@ class StorageService extends BaseSharedPreferencesService {
     _keyLibraryFilters,
     _keyLibraryOrder,
     _keyHiddenLibraries,
-    _keyCopyPriority,
+    _keyCopyPriorityMovies,
+    _keyCopyPriorityShows,
     _keyCopyPicks,
   ];
 
@@ -415,7 +418,8 @@ class StorageService extends BaseSharedPreferencesService {
       _clearLibraryPreferencesForServerPrefix('', serverId),
       _filterServerEntriesFromAllStringListKeys(_keyLibraryOrder, serverId),
       _filterServerEntriesFromAllStringListKeys(_keyHiddenLibraries, serverId),
-      _filterServerEntriesFromAllStringListKeys(_keyCopyPriority, serverId),
+      _filterServerEntriesFromAllStringListKeys(_keyCopyPriorityMovies, serverId),
+      _filterServerEntriesFromAllStringListKeys(_keyCopyPriorityShows, serverId),
       _forEachScopedKey(_keyCopyPicks, (key) => _dropCopyPicksForServer(key, serverId)),
       _clearServerSelectedLibraryKeysEverywhere(serverId),
       _clearServerPerLibraryKeysEverywhere(_prefixLibrarySort, serverId),
@@ -429,7 +433,8 @@ class StorageService extends BaseSharedPreferencesService {
     await Future.wait([
       _filterServerEntriesFromStringList('$prefix$_keyLibraryOrder', serverId),
       _filterServerEntriesFromStringList('$prefix$_keyHiddenLibraries', serverId),
-      _filterServerEntriesFromStringList('$prefix$_keyCopyPriority', serverId),
+      _filterServerEntriesFromStringList('$prefix$_keyCopyPriorityMovies', serverId),
+      _filterServerEntriesFromStringList('$prefix$_keyCopyPriorityShows', serverId),
       _dropCopyPicksForServer('$prefix$_keyCopyPicks', serverId),
       _clearSelectedLibraryForServer('$prefix$_keySelectedLibraryKey', serverId),
       _clearKeysWithPrefixForServer('$prefix$_prefixLibrarySort', serverId),
@@ -439,13 +444,19 @@ class StorageService extends BaseSharedPreferencesService {
     ]);
   }
 
-  // Copy priority (JSON list of `serverId:libraryId` keys, best first). Per
-  // device and per profile; deliberately not part of settings export.
-  Future<void> saveCopyPriorityForProfile(String profileId, List<String> libraryKeys) =>
-      _setStringList('${_userPrefixForProfileId(profileId)}$_keyCopyPriority', libraryKeys);
+  // Copy priority: one JSON list of `serverId:libraryId` keys per section,
+  // best first. Per device and per profile; deliberately not part of settings
+  // export.
+  static String _copyPriorityKey(CopyPrioritySection section) => switch (section) {
+    CopyPrioritySection.movies => _keyCopyPriorityMovies,
+    CopyPrioritySection.shows => _keyCopyPriorityShows,
+  };
 
-  List<String> getCopyPriorityForProfile(String profileId) =>
-      _getStringList('${_userPrefixForProfileId(profileId)}$_keyCopyPriority') ?? const [];
+  Future<void> saveCopyPriorityForProfile(String profileId, CopyPrioritySection section, List<String> libraryKeys) =>
+      _setStringList('${_userPrefixForProfileId(profileId)}${_copyPriorityKey(section)}', libraryKeys);
+
+  List<String> getCopyPriorityForProfile(String profileId, CopyPrioritySection section) =>
+      _getStringList('${_userPrefixForProfileId(profileId)}${_copyPriorityKey(section)}') ?? const [];
 
   // Copy picks: one raw JSON value per profile, `{"records": {id: {key, lib,
   // sig, at}}, "aliases": {alias: id}}`. The shape is owned by CopyPickStore.

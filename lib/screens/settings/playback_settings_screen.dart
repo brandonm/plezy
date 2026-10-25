@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../../i18n/strings.g.dart';
+import '../../media/copy_priority.dart';
 import '../../models/audio_channel_limit.dart';
 import '../../models/audio_quality_preset.dart';
 import '../../models/transcode_quality_preset.dart';
@@ -242,10 +243,16 @@ class PlaybackSettingsScreen extends StatelessWidget {
     title: t.settings.behavior,
     children: [
       SettingNavigationTile(
-        icon: Symbols.format_list_numbered_rounded,
-        title: t.settings.copyPriority,
+        icon: Symbols.movie_rounded,
+        title: t.settings.copyPriorityMovies,
         subtitle: t.settings.copyPriorityDescription,
-        destinationBuilder: (_) => const CopyPriorityScreen(),
+        destinationBuilder: (_) => const CopyPriorityScreen(section: CopyPrioritySection.movies),
+      ),
+      SettingNavigationTile(
+        icon: Symbols.tv_rounded,
+        title: t.settings.copyPriorityShows,
+        subtitle: t.settings.copyPriorityDescription,
+        destinationBuilder: (_) => const CopyPriorityScreen(section: CopyPrioritySection.shows),
       ),
       SettingSwitchTile(
         pref: SettingsService.rememberTrackSelections,

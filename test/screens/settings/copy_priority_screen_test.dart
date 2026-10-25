@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/i18n/strings.g.dart';
+import 'package:plezy/media/copy_priority.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_kind.dart';
 import 'package:plezy/media/media_library.dart';
@@ -41,6 +42,7 @@ Future<CopyPriorityProvider> _pump(
   WidgetTester tester,
   List<MediaLibrary> libraries, {
   List<String> stored = const [],
+  CopyPrioritySection section = CopyPrioritySection.movies,
   CopyPriorityProvider Function(StorageService storage)? create,
 }) async {
   tester.view.devicePixelRatio = 1;
@@ -49,7 +51,7 @@ Future<CopyPriorityProvider> _pump(
   addTearDown(tester.view.resetPhysicalSize);
 
   final storage = await StorageService.getInstance();
-  if (stored.isNotEmpty) await storage.saveCopyPriorityForProfile('p1', stored);
+  if (stored.isNotEmpty) await storage.saveCopyPriorityForProfile('p1', section, stored);
   final priority = create?.call(storage) ?? CopyPriorityProvider(storageService: storage, profileId: 'p1');
   await priority.ensureInitialized();
   addTearDown(priority.dispose);
@@ -62,7 +64,10 @@ Future<CopyPriorityProvider> _pump(
         ChangeNotifierProvider<LibrariesProvider>.value(value: libs),
         ChangeNotifierProvider<CopyPriorityProvider>.value(value: priority),
       ],
-      child: MaterialApp(theme: monoTheme(MonoPalette.dark), home: const CopyPriorityScreen()),
+      child: MaterialApp(
+        theme: monoTheme(MonoPalette.dark),
+        home: CopyPriorityScreen(section: section),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -92,7 +97,7 @@ class _FailingPriority extends CopyPriorityProvider {
   int saves = 0;
 
   @override
-  Future<void> setPriority(List<String> libraryKeys) {
+  Future<void> setPriority(CopyPrioritySection section, List<String> libraryKeys) {
     saves++;
     return Future.error(StateError('disk full'));
   }
@@ -104,7 +109,7 @@ void main() {
     LocaleSettings.setLocaleSync(AppLocale.en);
   });
 
-  testWidgets('lists movie, show and mixed-video libraries; excludes music and photo', (tester) async {
+  testWidgets('lists movie and mixed-video libraries; excludes music and photo', (tester) async {
     await _pump(tester, [
       _lib('1', 'm', 'Movies'),
       _lib('1', 's', 'Shows', kind: MediaKind.show),
@@ -115,11 +120,48 @@ void main() {
     ]);
 
     expect(find.text('Srv1 · Movies'), findsOneWidget);
-    expect(find.text('Srv1 · Shows'), findsOneWidget);
     expect(find.text('Srv1 · Mixed'), findsOneWidget);
     expect(find.textContaining('MixedMusic'), findsNothing);
     expect(find.text('Srv1 · Music'), findsNothing);
     expect(find.textContaining('Photos'), findsNothing);
+  });
+
+  testWidgets('the TV shows list holds show and mixed libraries, ranked apart from movies', (tester) async {
+    final storage = await StorageService.getInstance();
+    await storage.saveCopyPriorityForProfile('p1', CopyPrioritySection.movies, ['1:m', '1:x']);
+    final priority = await _pump(tester, [
+      _lib('1', 'm', 'Movies'),
+      _lib('1', 's', 'Shows', kind: MediaKind.show),
+      _lib('1', 'x', 'Mixed', kind: MediaKind.unknown, browse: [MediaKind.movie, MediaKind.show]),
+      _lib('1', 'mo', 'MixedMovies', kind: MediaKind.unknown, browse: [MediaKind.movie]),
+    ], section: CopyPrioritySection.shows);
+
+    expect(find.text('Copy priority: TV shows'), findsOneWidget);
+    expect(find.text('Srv1 · Movies'), findsNothing);
+    expect(find.text('Srv1 · MixedMovies'), findsNothing);
+    _expectOrder(tester, [_unranked, 'Srv1 · Shows', 'Srv1 · Mixed']);
+
+    await _key(tester, LogicalKeyboardKey.arrowDown); // cursor to Mixed
+    await _key(tester, LogicalKeyboardKey.select);
+    await _key(tester, LogicalKeyboardKey.arrowUp); // Mixed above Shows
+    await _key(tester, LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+
+    expect(priority.priority.shows, ['1:x']);
+    expect(priority.priority.movies, ['1:m', '1:x'], reason: 'the movies list is untouched');
+    expect(storage.getCopyPriorityForProfile('p1', CopyPrioritySection.movies), ['1:m', '1:x']);
+  });
+
+  testWidgets('the movies list leaves out show libraries', (tester) async {
+    await _pump(tester, [
+      _lib('1', 'm', 'Movies'),
+      _lib('1', 's', 'Shows', kind: MediaKind.show),
+      _lib('1', 'x', 'Mixed', kind: MediaKind.unknown, browse: [MediaKind.movie, MediaKind.show]),
+    ]);
+
+    expect(find.text('Copy priority: movies'), findsOneWidget);
+    expect(find.text('Srv1 · Shows'), findsNothing);
+    _expectOrder(tester, [_unranked, 'Srv1 · Movies', 'Srv1 · Mixed']);
   });
 
   testWidgets('ranked rows first, then the unranked divider', (tester) async {
@@ -143,7 +185,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select); // confirm
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:b', '1:a']);
+    expect(priority.priority.movies, ['1:b', '1:a']);
     final b = tester.getTopLeft(find.text('Srv1 · B')).dy;
     final a = tester.getTopLeft(find.text('Srv1 · A')).dy;
     expect(b < a, isTrue);
@@ -158,7 +200,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:b', '1:a']);
+    expect(priority.priority.movies, ['1:b', '1:a']);
     _expectOrder(tester, ['Srv1 · B', 'Srv1 · A', _unranked]);
   });
 
@@ -172,7 +214,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:a']);
+    expect(priority.priority.movies, ['1:a']);
     _expectOrder(tester, ['Srv1 · A', _unranked, 'Srv1 · B']);
   });
 
@@ -186,7 +228,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, isEmpty);
+    expect(priority.priority.movies, isEmpty);
   });
 
   testWidgets('with nothing ranked, a row moved up stays put: it is ranked', (tester) async {
@@ -198,7 +240,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:b']);
+    expect(priority.priority.movies, ['1:b']);
     _expectOrder(tester, ['Srv1 · B', _unranked, 'Srv1 · A']);
   });
 
@@ -210,7 +252,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:b', '1:a']);
+    expect(priority.priority.movies, ['1:b', '1:a']);
     _expectOrder(tester, ['Srv1 · B', 'Srv1 · A', _unranked, 'Srv1 · C']);
   });
 
@@ -228,7 +270,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:a', '1:c']);
+    expect(priority.priority.movies, ['1:a', '1:c']);
     _expectOrder(tester, ['Srv1 · A', 'Srv1 · C', _unranked, 'Srv1 · B']);
   });
 
@@ -242,7 +284,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, isEmpty);
+    expect(priority.priority.movies, isEmpty);
   });
 
   testWidgets('with nothing ranked, a row dragged above another, below the divider, is ranked', (tester) async {
@@ -263,7 +305,7 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:b']);
+    expect(priority.priority.movies, ['1:b']);
     _expectOrder(tester, ['Srv1 · B', _unranked, 'Srv1 · A']);
   });
 
@@ -278,7 +320,7 @@ void main() {
     expect(find.textContaining('front'), findsNothing);
     expect(find.textContaining('mid'), findsNothing);
     // Nothing is written on open.
-    expect(priority.priority, ['9:front', '1:a', '9:mid', '1:b']);
+    expect(priority.priority.movies, ['9:front', '1:a', '9:mid', '1:b']);
 
     await _key(tester, LogicalKeyboardKey.arrowDown);
     await _key(tester, LogicalKeyboardKey.select);
@@ -286,7 +328,12 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['9:front', '1:b', '1:a', '9:mid'], reason: 'each stays after the key it followed');
+    expect(priority.priority.movies, [
+      '9:front',
+      '1:b',
+      '1:a',
+      '9:mid',
+    ], reason: 'each stays after the key it followed');
   });
 
   testWidgets('with every library ranked, the bottom row moves down below the divider, by D-pad', (tester) async {
@@ -300,7 +347,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:a']);
+    expect(priority.priority.movies, ['1:a']);
     _expectOrder(tester, ['Srv1 · A', _unranked, 'Srv1 · B']);
   });
 
@@ -315,7 +362,7 @@ void main() {
     await _key(tester, LogicalKeyboardKey.select);
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:a', '1:b']);
+    expect(priority.priority.movies, ['1:a', '1:b']);
   });
 
   testWidgets('with every library ranked, a row dragged below the divider is unranked', (tester) async {
@@ -335,7 +382,7 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
 
-    expect(priority.priority, ['1:a']);
+    expect(priority.priority.movies, ['1:a']);
     _expectOrder(tester, ['Srv1 · A', _unranked, 'Srv1 · B']);
   });
 

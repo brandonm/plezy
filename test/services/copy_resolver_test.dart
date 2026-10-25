@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plezy/media/copy_priority.dart';
 import 'package:plezy/exceptions/media_server_exceptions.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/library_change_event.dart';
@@ -255,7 +256,8 @@ void main() {
     final created = CopyResolver(
       serverManager: servers,
       aggregation: aggregation ?? DataAggregationService(servers),
-      priority: () => priority,
+      // One list for both kinds; per-kind ranking is covered by compareCopiesByPriority.
+      priority: () => CopyPriority(movies: priority, shows: priority),
       freshWatchState: (item) => overlay(item),
       now: now ?? DateTime.now,
     );

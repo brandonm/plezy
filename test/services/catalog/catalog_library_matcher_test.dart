@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:plezy/media/copy_priority.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/exceptions/media_server_exceptions.dart';
 import 'package:plezy/media/ids.dart';
@@ -62,9 +63,11 @@ class _Harness {
     manager = MultiServerManager();
     aggregation = _FakeDataAggregationService(manager);
     multiServer = MultiServerProvider(manager, aggregation);
+    // One list for both kinds: these copies are movies.
+    final copyPriority = priority == null ? null : () => CopyPriority(movies: priority(), shows: priority());
     matcher = now == null
-        ? CatalogLibraryMatcher(multiServer, priority: priority)
-        : CatalogLibraryMatcher.withClock(multiServer, now, priority: priority);
+        ? CatalogLibraryMatcher(multiServer, priority: copyPriority)
+        : CatalogLibraryMatcher.withClock(multiServer, now, priority: copyPriority);
   }
 
   void dispose() {

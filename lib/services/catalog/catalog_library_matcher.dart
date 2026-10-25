@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../media/copy_priority.dart';
 import '../../media/media_item.dart';
 import '../../media/media_item_merge.dart';
 import '../../media/media_kind.dart';
@@ -30,7 +31,7 @@ class CatalogLibraryMatcher {
   /// The user's library ranking, read on every [match] so a cached entry
   /// re-sorts without a new lookup. Null keeps the default
   /// [compareLibraryCopies] order.
-  final List<String> Function()? _priority;
+  final CopyPriority Function()? _priority;
   final Map<String, _Entry> _cache = {};
   Set<String> _serverIds = {};
   int _scopeGeneration = 0;

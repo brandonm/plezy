@@ -1,3 +1,4 @@
+import 'copy_priority.dart';
 import 'ids.dart';
 import 'media_item.dart';
 import 'media_version.dart';
@@ -67,22 +68,30 @@ int compareLibraryCopies(MediaItem a, MediaItem b) {
   return a.globalKey.compareTo(b.globalKey);
 }
 
-/// Order the library copies of one title by a user-ranked [priority] list of
-/// library global keys (`serverId:libraryId`), best first.
+/// Order the library copies of one title by the user-ranked [priority] lists
+/// of library global keys (`serverId:libraryId`), best first. A copy is ranked
+/// by the list for its kind ([CopyPrioritySection.of]).
 ///
-/// A copy in a ranked library sorts by its index in [priority], and any ranked
+/// A copy in a ranked library sorts by its index in that list, and any ranked
 /// copy beats any unranked one. Unranked copies, including those with no
 /// [MediaItem.libraryId], order by best resolution, highest first. Ties fall
 /// through to [compareLibraryCopies], so the order stays total and stable
 /// across passes. Entries naming a library no copy belongs to are inert.
-Comparator<MediaItem> compareCopiesByPriority(List<String> priority) {
-  final rank = <String, int>{};
-  for (var i = 0; i < priority.length; i++) {
-    rank.putIfAbsent(priority[i], () => i);
-  }
+Comparator<MediaItem> compareCopiesByPriority(CopyPriority priority) {
+  final ranks = {
+    for (final section in CopyPrioritySection.values)
+      section: () {
+        final list = priority.of(section);
+        final rank = <String, int>{};
+        for (var i = 0; i < list.length; i++) {
+          rank.putIfAbsent(list[i], () => i);
+        }
+        return rank;
+      }(),
+  };
   int? rankOf(MediaItem item) {
     final key = item.libraryGlobalKey;
-    return key == null ? null : rank[key];
+    return key == null ? null : ranks[CopyPrioritySection.of(item.kind)]![key];
   }
 
   return (a, b) {

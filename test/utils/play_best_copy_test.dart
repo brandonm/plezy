@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openwatchparty/openwatchparty.dart' as owp;
+import 'package:plezy/media/copy_priority.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/media/ids.dart';
@@ -551,7 +552,7 @@ class _SlowPriority extends ChangeNotifier implements CopyPriorityProvider {
   Future<void> ensureInitialized() => loaded.future;
 
   @override
-  List<String> get priority => const [];
+  CopyPriority get priority => CopyPriority.empty;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

@@ -773,8 +773,11 @@ class Translations$settings$en {
 	/// en: 'Music Quality'
 	String get musicQualityTitle => 'Music Quality';
 
-	/// en: 'Copy priority'
-	String get copyPriority => 'Copy priority';
+	/// en: 'Copy priority: movies'
+	String get copyPriorityMovies => 'Copy priority: movies';
+
+	/// en: 'Copy priority: TV shows'
+	String get copyPriorityShows => 'Copy priority: TV shows';
 
 	/// en: 'Play starts the best-ranked copy of a title'
 	String get copyPriorityDescription => 'Play starts the best-ranked copy of a title';
@@ -8321,7 +8324,8 @@ extension on Translations {
 			'settings.videoCodecsDescription' => 'Unchecked codecs are transcoded by the server',
 			'settings.videoCodecsAlwaysAccepted' => 'Always accepted',
 			'settings.musicQualityTitle' => 'Music Quality',
-			'settings.copyPriority' => 'Copy priority',
+			'settings.copyPriorityMovies' => 'Copy priority: movies',
+			'settings.copyPriorityShows' => 'Copy priority: TV shows',
 			'settings.copyPriorityDescription' => 'Play starts the best-ranked copy of a title',
 			'settings.copyPriorityUnranked' => 'Unranked (by resolution)',
 			'settings.subtitleStyling' => 'Subtitle Styling',
@@ -8579,9 +8583,9 @@ extension on Translations {
 			'themeEditor.preview' => 'Preview',
 			'themeEditor.slots.bg' => 'Background',
 			'themeEditor.slots.surface' => 'Surface',
-			'themeEditor.slots.outline' => 'Outline',
 			_ => null,
 		} ?? switch (path) {
+			'themeEditor.slots.outline' => 'Outline',
 			'themeEditor.slots.text' => 'Text',
 			'themeEditor.slots.textMuted' => 'Secondary text',
 			'themeEditor.slots.accent' => 'Accent',
@@ -9093,9 +9097,9 @@ extension on Translations {
 			'profiles.incorrectPinTryAgain' => 'Incorrect PIN. Please try again.',
 			'profiles.sourceProfileMissingParentAccount' => 'Source profile is missing its parent account.',
 			'profiles.failedToLoadHomeUsers' => 'Could not load your Plex Home users. Check your connection and try again.',
-			'profiles.failedToVerifyPin' => 'Failed to verify PIN.',
 			_ => null,
 		} ?? switch (path) {
+			'profiles.failedToVerifyPin' => 'Failed to verify PIN.',
 			'profiles.newProfile' => 'New profile',
 			'profiles.profileNameHint' => 'e.g. Guests, Kids, Family Room',
 			'profiles.pinProtectionOptional' => 'PIN protection (optional)',
@@ -9607,9 +9611,9 @@ extension on Translations {
 			'liveTv.guideReloadRequested' => 'Guide refresh requested',
 			'liveTv.guideReloadFailed' => 'Couldn\'t refresh the guide',
 			'liveTv.rulesProcessRequested' => 'Rule re-evaluation requested',
-			'liveTv.rulesProcessFailed' => 'Couldn\'t re-evaluate recording rules',
 			_ => null,
 		} ?? switch (path) {
+			'liveTv.rulesProcessFailed' => 'Couldn\'t re-evaluate recording rules',
 			'liveTv.recordShow' => 'Record show',
 			'liveTv.recordSettings.startEarly' => 'Start early (seconds)',
 			'liveTv.recordSettings.endLate' => 'End late (seconds)',
@@ -10121,9 +10125,9 @@ extension on Translations {
 			'performanceOverlay.cacheLimit' => 'Cache Limit',
 			'performanceOverlay.speed' => 'Speed',
 			'performanceOverlay.player' => 'Player',
-			'performanceOverlay.playMethod' => 'Play Method',
 			_ => null,
 		} ?? switch (path) {
+			'performanceOverlay.playMethod' => 'Play Method',
 			'performanceOverlay.memory' => 'Memory',
 			'performanceOverlay.uiFps' => 'UI FPS',
 			'performanceOverlay.fps' => 'FPS',

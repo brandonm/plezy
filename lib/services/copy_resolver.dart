@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../exceptions/media_server_exceptions.dart';
+import '../media/copy_priority.dart';
 import '../media/copy_selection.dart';
 import '../media/library_change_event.dart';
 import '../media/media_backend.dart';
@@ -77,7 +78,7 @@ class CopyResolver {
 
   final MultiServerManager _serverManager;
   final DataAggregationService _aggregation;
-  final List<String> Function() _priority;
+  final CopyPriority Function() _priority;
   final MediaItem Function(MediaItem) _freshWatchState;
   final DateTime Function() _now;
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:drift/native.dart';
+import 'package:plezy/media/copy_priority.dart';
 import 'package:plezy/media/ids.dart';
 
 import 'package:flutter/material.dart';
@@ -3711,7 +3712,7 @@ void main() {
       await settleLookup(tester);
       expect(find.text('Play · Silo Movies 4K Remux'), findsOneWidget);
 
-      await priority.setPriority([plexMovie.libraryGlobalKey!]);
+      await priority.setPriority(CopyPrioritySection.movies, [plexMovie.libraryGlobalKey!]);
       await deliver(tester);
 
       expect(find.text('Play · Server Movies'), findsOneWidget, reason: 'the newly top-ranked copy');
